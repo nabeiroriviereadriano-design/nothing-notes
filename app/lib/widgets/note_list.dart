@@ -312,7 +312,12 @@ class _NoteCardState extends State<NoteCard> {
                           ],
                           const SizedBox(height: 6),
                           Row(children: [
-                            Text(formatDate(n.updatedAt), style: TextStyle(fontSize: 11.5, color: nn.mid)),
+                            Flexible(
+                              child: Text(formatDate(n.updatedAt),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(fontSize: 11.5, color: nn.mid)),
+                            ),
                             const SizedBox(width: 8),
                             for (final t in n.tags.take(3))
                               if (widget.tags[t] != null)

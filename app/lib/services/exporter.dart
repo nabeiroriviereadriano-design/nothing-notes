@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
@@ -62,20 +61,21 @@ Future<Uint8List> buildExport(NotesRepository repo, Note n, ExportFormat f) asyn
 /// Ouvre la boîte « Enregistrer sous » et écrit le fichier. Retourne le
 /// chemin choisi, ou null si l'utilisateur a annulé.
 Future<String?> saveBytes(String fileName, Uint8List bytes) async {
-  final path = await FilePicker.platform.saveFile(
+  final uri = await FilePicker.saveFile(
     dialogTitle: 'Enregistrer',
     fileName: fileName,
     bytes: bytes,
   );
-  if (path == null) return null;
-  // Sur Windows, la boîte de dialogue ne fait que choisir le chemin.
-  if (Platform.isWindows) {
-    final f = File(path);
+  if (uri == null) return null;
+  // Sur Windows, on s'assure que le fichier a bien été écrit.
+  if (Platform.isWindows && (uri.scheme == 'file' || uri.scheme.isEmpty)) {
+    final f = File(uri.scheme == 'file' ? uri.toFilePath() : uri.path);
     if (!await f.exists() || await f.length() != bytes.length) {
       await f.writeAsBytes(bytes, flush: true);
     }
+    return f.path;
   }
-  return path;
+  return uri.pathSegments.isNotEmpty ? Uri.decodeComponent(uri.pathSegments.last) : fileName;
 }
 
 // ------------------------------------------------------------------ PDF

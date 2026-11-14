@@ -604,17 +604,18 @@ class NoteEditorState extends State<NoteEditor> {
 
   Future<void> addAttachment({required bool image}) async {
     if (_readOnly || note == null) return;
-    final res = await FilePicker.platform.pickFiles(
-      type: image ? FileType.image : FileType.any,
-      allowMultiple: true,
-      withData: true,
-    );
-    if (res == null) return;
+    final files = await FilePicker.pickFiles(type: image ? FileType.image : FileType.any);
+    if (files.isEmpty) return;
     var index = _insertIndex;
-    for (final f in res.files) {
-      var bytes = f.bytes;
-      if (bytes == null && f.path != null) bytes = await File(f.path!).readAsBytes();
-      if (bytes == null) continue;
+    for (final f in files) {
+      final Uint8List bytes;
+      try {
+        bytes = await f.readAsBytes();
+      } catch (_) {
+        if (mounted) toast(context, 'Lecture impossible : ${f.name}');
+        continue;
+      }
+      if (!mounted) return;
       if (bytes.length > 50 * 1024 * 1024) {
         if (mounted) toast(context, '${f.name} dépasse 50 Mo');
         continue;

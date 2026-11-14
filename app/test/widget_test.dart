@@ -27,6 +27,12 @@ Widget _wrap(AppController app, {Brightness b = Brightness.dark}) => AppScope(
       ),
     );
 
+void _size(WidgetTester tester, Size logical) {
+  tester.view.devicePixelRatio = 1.0;
+  tester.view.physicalSize = logical;
+  addTearDown(tester.view.reset);
+}
+
 Finder get _focusedField => find.byWidgetPredicate((w) => w is EditableText && w.focusNode.hasFocus);
 
 void main() {
@@ -37,7 +43,7 @@ void main() {
     s.repo.createNote(title: 'Liste d\'achats', blocks: [Block(type: BlockType.todo, text: 'Bois')]);
     s.app.selectedNoteId = n.id;
 
-    await tester.binding.setSurfaceSize(const Size(1440, 900));
+    _size(tester, const Size(1440, 900));
     await tester.pumpWidget(_wrap(s.app));
     await tester.pumpAndSettle();
 
@@ -76,7 +82,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(s.repo.allNotes(), hasLength(3));
     tester.state<NoteEditorState>(find.byType(NoteEditor)).flush();
-    await tester.binding.setSurfaceSize(null);
   });
 
   testWidgets('téléphone : liste, ouverture d\'une note, retour', (tester) async {
@@ -84,7 +89,7 @@ void main() {
     s.repo.createNote(title: 'Projet de jeu', blocks: [Block(text: 'FOREST ECHOES · Animations')]);
     s.repo.createNote(title: 'Idées', blocks: [Block(text: 'Haptique · Bureau · 3DS')]);
 
-    await tester.binding.setSurfaceSize(const Size(400, 860));
+    _size(tester, const Size(400, 860));
     await tester.pumpWidget(_wrap(s.app, b: Brightness.light));
     await tester.pumpAndSettle();
 
@@ -106,7 +111,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Idées'), findsOneWidget);
     expect(find.text('Projet de jeu'), findsNothing);
-    await tester.binding.setSurfaceSize(null);
   });
 
   test('comparaison de versions pour les mises à jour', () {

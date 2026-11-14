@@ -35,6 +35,17 @@ def manifest(s):
 
 edit("android/app/src/main/AndroidManifest.xml", manifest)
 
+
+def gradle(s):
+    # minSdk 24 (Android 7.0) : exigé par certaines bibliothèques récentes
+    s = s.replace("minSdk = flutter.minSdkVersion", "minSdk = maxOf(24, flutter.minSdkVersion)")
+    s = s.replace("minSdkVersion flutter.minSdkVersion", "minSdkVersion Math.max(24, flutter.minSdkVersion)")
+    return s
+
+
+edit("android/app/build.gradle.kts", gradle)
+edit("android/app/build.gradle", gradle)
+
 # ---------------------------------------------------------------- Windows
 edit("windows/runner/main.cpp", lambda s: s.replace('L"nothing_notes"', 'L"Nothing Notes"')
      .replace("Win32Window::Size size(1280, 720);", "Win32Window::Size size(1360, 860);"))
