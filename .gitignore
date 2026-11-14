@@ -1,0 +1,23 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+pubspec.lock
+!app/pubspec.lock
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+# plateformes générées par `flutter create` en CI (voir tools/prepare_platforms.sh)
+app/android/
+app/windows/
+app/.metadata
+# Secrets
+*.jks
+*.keystore
+key.properties
+.env
+supabase/.temp/
+supabase/.branches/
+dist/

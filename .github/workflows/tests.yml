@@ -1,0 +1,66 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-sql:
+    name: Backend SQL (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Migration + tests de sécurité et de synchronisation
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q \
+            -f supabase/tests/stub_supabase.sql \
+            -f supabase/migrations/20261114000000_nothing_notes.sql \
+            -f supabase/migrations/20261114000000_nothing_notes.sql \
+            -f supabase/tests/backend_test.sql 2>&1 | tee sql.log
+          grep -q "TOUS LES TESTS BACKEND SONT PASSÉS" sql.log
+
+  core:
+    name: Noyau de synchronisation (Dart)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/notes_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - run: dart pub get
+      - name: Analyse statique
+        run: dart analyze 2>&1 | tee analyze.log
+      - name: Tests unitaires et scénarios (serveur simulé)
+        run: dart test --reporter expanded --no-color 2>&1 | tee test.log
+      - name: Résumé
+        if: always()
+        run: |
+          {
+            echo '### Analyse'; echo '```'; tail -n 60 analyze.log 2>/dev/null; echo '```'
+            echo '### Tests'; echo '```'; grep -E "\[E\]|Some tests failed|All tests passed|^\s+(Expected|Actual|Which)" test.log 2>/dev/null | tail -n 80; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-logs
+          path: packages/notes_core/*.log

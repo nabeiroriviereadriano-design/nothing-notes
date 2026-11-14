@@ -1,0 +1,420 @@
+import 'dart:convert';
+
+import 'package:uuid/uuid.dart';
+
+const _uuid = Uuid();
+
+/// Génère un identifiant unique (UUID v4).
+String newId() => _uuid.v4();
+
+/// Les quatre types d'éléments synchronisés. Le nom correspond à la table serveur.
+enum EntityType { folders, tags, notes, attachments }
+
+EntityType entityFromName(String name) =>
+    EntityType.values.firstWhere((e) => e.name == name);
+
+String nowIso() => DateTime.now().toUtc().toIso8601String();
+
+DateTime? parseDate(Object? v) {
+  if (v == null) return null;
+  if (v is DateTime) return v.toUtc();
+  return DateTime.tryParse(v.toString())?.toUtc();
+}
+
+int asInt(Object? v, [int fallback = 0]) {
+  if (v == null) return fallback;
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  return int.tryParse(v.toString()) ?? fallback;
+}
+
+bool asBool(Object? v) => v == true || v == 1 || v == 'true';
+
+/// Copie profonde d'une structure JSON.
+T jsonClone<T>(T value) => jsonDecode(jsonEncode(value)) as T;
+
+// --------------------------------------------------------------------------
+// Blocs de contenu
+// --------------------------------------------------------------------------
+
+/// Types de blocs de l'éditeur.
+class BlockType {
+  static const paragraph = 'p';
+  static const heading1 = 'h1';
+  static const heading2 = 'h2';
+  static const quote = 'quote';
+  static const bullet = 'bullet';
+  static const numbered = 'numbered';
+  static const todo = 'todo';
+  static const code = 'code';
+  static const divider = 'divider';
+  static const image = 'image';
+  static const file = 'file';
+  static const table = 'table';
+
+  static const textual = {paragraph, heading1, heading2, quote, bullet, numbered, todo, code};
+}
+
+/// Un bloc de note. Les champs inconnus sont conservés (compatibilité future).
+class Block {
+  Block({
+    String? id,
+    this.type = BlockType.paragraph,
+    this.text = '',
+    this.checked = false,
+    this.attachmentId,
+    this.rows,
+    this.extra = const {},
+  }) : id = id ?? newId();
+
+  final String id;
+  String type;
+  String text;
+  bool checked;
+  String? attachmentId;
+  List<List<String>>? rows;
+  final Map<String, dynamic> extra;
+
+  bool get isTextual => BlockType.textual.contains(type);
+
+  factory Block.fromJson(Map<String, dynamic> j) {
+    final known = {'id', 'type', 'text', 'checked', 'attachment_id', 'rows'};
+    return Block(
+      id: (j['id'] ?? newId()).toString(),
+      type: (j['type'] ?? BlockType.paragraph).toString(),
+      text: (j['text'] ?? '').toString(),
+      checked: asBool(j['checked']),
+      attachmentId: j['attachment_id']?.toString(),
+      rows: (j['rows'] as List?)
+          ?.map((r) => (r as List).map((c) => (c ?? '').toString()).toList())
+          .toList(),
+      extra: {
+        for (final e in j.entries)
+          if (!known.contains(e.key)) e.key: e.value
+      },
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        ...extra,
+        'id': id,
+        'type': type,
+        if (text.isNotEmpty || isTextual) 'text': text,
+        if (type == BlockType.todo) 'checked': checked,
+        if (attachmentId != null) 'attachment_id': attachmentId,
+        if (rows != null) 'rows': rows,
+      };
+
+  Block copy() => Block.fromJson(jsonClone(toJson()));
+}
+
+List<Block> blocksFromContent(Object? content) {
+  if (content is String) {
+    try {
+      content = jsonDecode(content);
+    } catch (_) {
+      return [Block(text: content as String)];
+    }
+  }
+  if (content is Map && content['blocks'] is List) {
+    return (content['blocks'] as List)
+        .whereType<Map>()
+        .map((b) => Block.fromJson(Map<String, dynamic>.from(b)))
+        .toList();
+  }
+  return [];
+}
+
+Map<String, dynamic> contentFromBlocks(List<Block> blocks) =>
+    {'blocks': blocks.map((b) => b.toJson()).toList()};
+
+/// Texte brut d'une liste de blocs (recherche, aperçu, export TXT).
+String plainText(List<Block> blocks) {
+  final buf = StringBuffer();
+  for (final b in blocks) {
+    if (b.isTextual && b.text.trim().isNotEmpty) {
+      buf.writeln(stripInlineMarkers(b.text));
+    } else if (b.type == BlockType.table && b.rows != null) {
+      for (final r in b.rows!) {
+        buf.writeln(r.join(' | '));
+      }
+    }
+  }
+  return buf.toString().trim();
+}
+
+final _markerRe = RegExp(r'\*\*|\+\+|~~|`|(?<![\w*])\*(?!\s)|(?<!\s)\*(?![\w*])');
+final _linkRe = RegExp(r'\[([^\]]*)\]\(([^)\s]+)\)');
+
+String stripInlineMarkers(String s) =>
+    s.replaceAllMapped(_linkRe, (m) => m.group(1)!).replaceAll(_markerRe, '');
+
+// --------------------------------------------------------------------------
+// Entités
+// --------------------------------------------------------------------------
+
+/// Note telle que manipulée par l'interface.
+class Note {
+  Note({
+    required this.id,
+    this.title = '',
+    List<Block>? blocks,
+    this.folderId,
+    List<String>? tags,
+    this.favorite = false,
+    this.archived = false,
+    this.trashedAt,
+    this.purged = false,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    this.deviceId,
+    this.version = 0,
+    this.dirty = false,
+    this.conflictRow,
+  })  : blocks = blocks ?? [],
+        tags = tags ?? [],
+        createdAt = createdAt ?? DateTime.now().toUtc(),
+        updatedAt = updatedAt ?? DateTime.now().toUtc();
+
+  final String id;
+  String title;
+  List<Block> blocks;
+  String? folderId;
+  List<String> tags;
+  bool favorite;
+  bool archived;
+  DateTime? trashedAt;
+  bool purged;
+  DateTime createdAt;
+  DateTime updatedAt;
+  String? deviceId;
+  int version;
+
+  /// Modifications locales pas encore confirmées par le serveur.
+  bool dirty;
+
+  /// Version serveur concurrente non résolue (conflit à arbitrer).
+  Map<String, dynamic>? conflictRow;
+
+  bool get hasConflict => conflictRow != null;
+  bool get trashed => trashedAt != null;
+
+  factory Note.fromRow(Map<String, dynamic> r, {bool dirty = false, Map<String, dynamic>? conflict}) => Note(
+        id: r['id'].toString(),
+        title: (r['title'] ?? '').toString(),
+        blocks: blocksFromContent(r['content']),
+        folderId: r['folder_id']?.toString(),
+        tags: ((r['tags'] as List?) ?? const []).map((e) => e.toString()).toList(),
+        favorite: asBool(r['favorite']),
+        archived: asBool(r['archived']),
+        trashedAt: parseDate(r['trashed_at']),
+        purged: asBool(r['purged']),
+        createdAt: parseDate(r['created_at']),
+        updatedAt: parseDate(r['updated_at']),
+        deviceId: r['device_id']?.toString(),
+        version: asInt(r['version']),
+        dirty: dirty,
+        conflictRow: conflict,
+      );
+
+  Map<String, dynamic> toRow() => {
+        'id': id,
+        'title': title,
+        'content': contentFromBlocks(blocks),
+        'folder_id': folderId,
+        'tags': tags,
+        'favorite': favorite,
+        'archived': archived,
+        'trashed_at': trashedAt?.toUtc().toIso8601String(),
+        'purged': purged,
+        'created_at': createdAt.toUtc().toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
+        'device_id': deviceId,
+        'version': version,
+      };
+
+  Note copy() => Note.fromRow(jsonClone(toRow()), dirty: dirty, conflict: conflictRow);
+
+  String get preview {
+    final t = plainText(blocks).replaceAll('\n', ' · ');
+    return t.length > 140 ? '${t.substring(0, 140)}…' : t;
+  }
+
+  bool get hasChecklist => blocks.any((b) => b.type == BlockType.todo);
+  bool get hasImage => blocks.any((b) => b.type == BlockType.image);
+  bool get hasCode => blocks.any((b) => b.type == BlockType.code);
+}
+
+class Folder {
+  Folder({
+    required this.id,
+    this.name = '',
+    this.parentId,
+    this.color,
+    this.position = 0,
+    this.deleted = false,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    this.version = 0,
+  })  : createdAt = createdAt ?? DateTime.now().toUtc(),
+        updatedAt = updatedAt ?? DateTime.now().toUtc();
+
+  final String id;
+  String name;
+  String? parentId;
+  String? color;
+  double position;
+  bool deleted;
+  DateTime createdAt;
+  DateTime updatedAt;
+  int version;
+
+  factory Folder.fromRow(Map<String, dynamic> r) => Folder(
+        id: r['id'].toString(),
+        name: (r['name'] ?? '').toString(),
+        parentId: r['parent_id']?.toString(),
+        color: r['color']?.toString(),
+        position: (r['position'] as num?)?.toDouble() ?? 0,
+        deleted: asBool(r['deleted']),
+        createdAt: parseDate(r['created_at']),
+        updatedAt: parseDate(r['updated_at']),
+        version: asInt(r['version']),
+      );
+
+  Map<String, dynamic> toRow() => {
+        'id': id,
+        'name': name,
+        'parent_id': parentId,
+        'color': color,
+        'position': position,
+        'deleted': deleted,
+        'created_at': createdAt.toUtc().toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
+        'version': version,
+      };
+}
+
+class Tag {
+  Tag({
+    required this.id,
+    this.name = '',
+    this.color,
+    this.deleted = false,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    this.version = 0,
+  })  : createdAt = createdAt ?? DateTime.now().toUtc(),
+        updatedAt = updatedAt ?? DateTime.now().toUtc();
+
+  final String id;
+  String name;
+  String? color;
+  bool deleted;
+  DateTime createdAt;
+  DateTime updatedAt;
+  int version;
+
+  factory Tag.fromRow(Map<String, dynamic> r) => Tag(
+        id: r['id'].toString(),
+        name: (r['name'] ?? '').toString(),
+        color: r['color']?.toString(),
+        deleted: asBool(r['deleted']),
+        createdAt: parseDate(r['created_at']),
+        updatedAt: parseDate(r['updated_at']),
+        version: asInt(r['version']),
+      );
+
+  Map<String, dynamic> toRow() => {
+        'id': id,
+        'name': name,
+        'color': color,
+        'deleted': deleted,
+        'created_at': createdAt.toUtc().toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
+        'version': version,
+      };
+}
+
+class Attachment {
+  Attachment({
+    required this.id,
+    required this.noteId,
+    this.fileName = 'fichier',
+    this.mime = 'application/octet-stream',
+    this.sizeBytes = 0,
+    this.sha256,
+    this.storagePath,
+    this.deleted = false,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    this.version = 0,
+  })  : createdAt = createdAt ?? DateTime.now().toUtc(),
+        updatedAt = updatedAt ?? DateTime.now().toUtc();
+
+  final String id;
+  String noteId;
+  String fileName;
+  String mime;
+  int sizeBytes;
+  String? sha256;
+  String? storagePath;
+  bool deleted;
+  DateTime createdAt;
+  DateTime updatedAt;
+  int version;
+
+  bool get isImage => mime.startsWith('image/');
+
+  factory Attachment.fromRow(Map<String, dynamic> r) => Attachment(
+        id: r['id'].toString(),
+        noteId: r['note_id'].toString(),
+        fileName: (r['file_name'] ?? 'fichier').toString(),
+        mime: (r['mime'] ?? 'application/octet-stream').toString(),
+        sizeBytes: asInt(r['size_bytes']),
+        sha256: r['sha256']?.toString(),
+        storagePath: r['storage_path']?.toString(),
+        deleted: asBool(r['deleted']),
+        createdAt: parseDate(r['created_at']),
+        updatedAt: parseDate(r['updated_at']),
+        version: asInt(r['version']),
+      );
+
+  Map<String, dynamic> toRow() => {
+        'id': id,
+        'note_id': noteId,
+        'file_name': fileName,
+        'mime': mime,
+        'size_bytes': sizeBytes,
+        'sha256': sha256,
+        'storage_path': storagePath,
+        'deleted': deleted,
+        'created_at': createdAt.toUtc().toIso8601String(),
+        'updated_at': updatedAt.toUtc().toIso8601String(),
+        'version': version,
+      };
+}
+
+/// Devine le type MIME à partir de l'extension.
+String guessMime(String fileName) {
+  final ext = fileName.contains('.') ? fileName.split('.').last.toLowerCase() : '';
+  const map = {
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'bmp': 'image/bmp',
+    'pdf': 'application/pdf',
+    'txt': 'text/plain',
+    'md': 'text/markdown',
+    'csv': 'text/csv',
+    'zip': 'application/zip',
+    'doc': 'application/msword',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'mp3': 'audio/mpeg',
+    'wav': 'audio/wav',
+    'mp4': 'video/mp4',
+  };
+  return map[ext] ?? 'application/octet-stream';
+}
