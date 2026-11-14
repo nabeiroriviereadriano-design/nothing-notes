@@ -21,7 +21,7 @@ class SecureSessionStorage extends LocalStorage {
 
   final Directory dir;
   static const _keyName = 'nothing_notes_session_key_v1';
-  static const _secure = FlutterSecureStorage(aOptions: AndroidOptions(encryptedSharedPreferences: true));
+  static const _secure = FlutterSecureStorage();
 
   File get _file => File(p.join(dir.path, 'session.bin'));
   Uint8List? _key;
