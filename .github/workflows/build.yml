@@ -1,0 +1,202 @@
+name: Build Android + Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  # Adresse et clé PUBLIQUE (anon) du projet Supabase, à définir dans
+  # Settings > Secrets and variables > Actions. Facultatives : sans elles,
+  # l'application demande l'adresse du serveur au premier lancement.
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF#refs/tags/v}";
+          else V=$(grep -E '^version:' app/pubspec.yaml | sed -E 's/version: *([0-9.]+).*/\1/'); fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Version : $V"
+
+  app-tests:
+    name: Analyse + tests de l'application
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - run: flutter --version
+      - run: flutter pub get
+      - name: Analyse statique
+        run: flutter analyze --no-fatal-infos 2>&1 | tee analyze.log
+      - name: Tests de l'interface
+        run: flutter test --reporter expanded 2>&1 | tee test.log
+      - name: Résumé
+        if: always()
+        run: |
+          {
+            echo '### Analyse'; echo '```'; grep -E "error|warning" analyze.log | head -n 80; tail -n 3 analyze.log; echo '```'
+            echo '### Tests'; echo '```'; grep -E "\[E\]|Some tests failed|All tests passed|Expected|Actual|Which|══" test.log | head -n 80; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  android:
+    name: APK Android
+    needs: version
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: tools/prepare_platforms.sh
+      - name: Compilation
+        working-directory: app
+        run: |
+          flutter build apk --release \
+            --build-name=${{ needs.version.outputs.version }} --build-number=${{ github.run_number }} \
+            --dart-define=APP_VERSION=${{ needs.version.outputs.version }} \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+      - name: Signature
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          APK=app/build/app/outputs/flutter-apk/app-release.apk
+          OUT=NothingNotes-${{ needs.version.outputs.version }}.apk
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > ks.jks
+            BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+            cp "$APK" unsigned.apk
+            zip -q -d unsigned.apk 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.EC' 'META-INF/*.MF' || true
+            "$BT/zipalign" -p -f 4 unsigned.apk aligned.apk
+            "$BT/apksigner" sign --ks ks.jks --ks-pass env:KS_PASS --ks-key-alias "$KEY_ALIAS" --key-pass env:KS_PASS --out "$OUT" aligned.apk
+            "$BT/apksigner" verify --print-certs "$OUT" | head -3
+            rm -f ks.jks
+          else
+            cp "$APK" "$OUT"
+            echo "::warning::Pas de clé de signature (secret ANDROID_KEYSTORE_BASE64) : APK signé avec une clé de test temporaire."
+          fi
+          ls -la "$OUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: NothingNotes-*.apk
+          if-no-files-found: error
+
+  windows:
+    name: Installateur Windows
+    needs: version
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: tools/prepare_platforms.sh
+      - name: Compilation
+        working-directory: app
+        run: |
+          flutter build windows --release \
+            --build-name=${{ needs.version.outputs.version }} --build-number=${{ github.run_number }} \
+            --dart-define=APP_VERSION=${{ needs.version.outputs.version }} \
+            --dart-define=SUPABASE_URL="$SUPABASE_URL" --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+      - name: Bibliothèques Visual C++ (application autonome)
+        run: |
+          REL=app/build/windows/x64/runner/Release
+          for f in msvcp140.dll vcruntime140.dll vcruntime140_1.dll; do cp "/c/Windows/System32/$f" "$REL/"; done
+          ls "$REL"
+      - name: Installateur (Inno Setup)
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /Qp "/DAppVersion=${{ needs.version.outputs.version }}" installer\NothingNotes.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path app\build\windows\x64\runner\Release\* -DestinationPath "dist\NothingNotes-${{ needs.version.outputs.version }}-portable.zip"
+          Get-ChildItem dist
+      - name: Test de démarrage de l'application compilée
+        shell: pwsh
+        run: |
+          $exe = "app\build\windows\x64\runner\Release\NothingNotes.exe"
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 12
+          if ($p.HasExited) { Write-Error "L'application s'est arrêtée au démarrage (code $($p.ExitCode))"; exit 1 }
+          Write-Host "L'application tourne depuis 12 s (PID $($p.Id))."
+          Stop-Process -Id $p.Id -Force
+      - name: Test installation / désinstallation silencieuses
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\NothingNotes-Setup-*.exe | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          $dir = "$env:LOCALAPPDATA\Programs\Nothing Notes"
+          if (-not (Test-Path "$dir\NothingNotes.exe")) { Write-Error "Installation échouée"; exit 1 }
+          Write-Host "Installé dans $dir"
+          Start-Process -FilePath "$dir\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          Start-Sleep -Seconds 3
+          if (Test-Path "$dir\NothingNotes.exe") { Write-Error "Désinstallation incomplète"; exit 1 }
+          Write-Host "Désinstallation propre : OK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publication GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, app-tests, android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Créer la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=${{ needs.version.outputs.version }}
+          gh release create "v$V" out/android-apk/* out/windows-installer/* \
+            --title "Nothing Notes $V" \
+            --notes "Téléchargements :
+          - **Windows 10/11** : \`NothingNotes-Setup-$V.exe\` (installateur, sans droits administrateur) ou la version portable .zip
+          - **Android** : \`NothingNotes-$V.apk\`
+
+          Mise à jour : installez simplement la nouvelle version par-dessus l'ancienne, vos notes sont conservées." \
+            || gh release upload "v$V" out/android-apk/* out/windows-installer/* --clobber
