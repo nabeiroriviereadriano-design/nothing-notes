@@ -66,7 +66,19 @@ void main() {
       await b.dispose();
     });
 
-    test('compte : connexion, déconnexion globale, suppression du compte et des données', () async {
+    test('déconnexion de tous les appareils : les autres sessions ne peuvent plus être renouvelées', () async {
+      final c1 = await backend.connectClient('dave');
+      final c2 = await backend.connectClient('dave');
+      expect(c2.auth.currentSession, isNotNull);
+      await AccountService(c1).signOutEverywhere();
+      expect(c1.auth.currentSession, isNull);
+      await expectLater(c2.auth.refreshSession(), throwsA(anything));
+      // Le compte existe toujours : on peut se reconnecter avec le mot de passe.
+      final c3 = await backend.connectClient('dave');
+      expect(c3.auth.currentSession, isNotNull);
+    });
+
+    test('compte : suppression du compte et de toutes ses données', () async {
       final c1 = await backend.connectClient('carol');
       final c2 = await backend.connectClient('carol');
       final r1 = SupabaseRemote(c1);

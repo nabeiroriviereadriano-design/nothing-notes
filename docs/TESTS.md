@@ -34,9 +34,10 @@ session et son propre moteur de synchronisation).
 | — | Écriture directe dans les tables | Refusée (tout passe par `sync_push`) |
 | — | Accès anonyme | Refusé |
 | — | Temps réel | L'autre appareil est notifié en quelques secondes |
-| — | Compte | Suppression du compte : données et fichiers effacés, autre session sans accès, reconnexion impossible |
+| — | Déconnexion de tous les appareils | Les sessions des autres appareils ne peuvent plus être renouvelées ; la reconnexion par mot de passe reste possible |
+| — | Suppression du compte | Données et fichiers effacés, autre session sans accès, reconnexion impossible |
 
-**Résultat : 21 / 21 réussis.**
+**Résultat : 22 / 22 réussis.**
 
 Les mêmes scénarios tournent aussi contre un serveur simulé en mémoire
 (job *Noyau de synchronisation*), avec les tests unitaires de fusion, de
@@ -57,7 +58,7 @@ Workflow **Build Android + Windows** :
 
 | Vérification | Résultat |
 |---|---|
-| Analyse statique de l'application | aucune erreur ni avertissement |
+| Analyse statique de l'application | aucune erreur ni avertissement (15 remarques d'information sur des API signalées comme dépréciées par la dernière version de Flutter) |
 | Interface bureau (1440×900) : trois colonnes, saisie, `[] ` → cases à cocher, Entrée → bloc suivant, gras, enregistrement local, file de synchronisation, nouvelle note | réussi |
 | Interface téléphone (400×860) : liste, ouverture d'une note, retour, recherche instantanée | réussi |
 | Compilation de l'APK Android | réussie |
@@ -68,11 +69,25 @@ Workflow **Build Android + Windows** :
 
 ## 4. Ce qui reste à vérifier à la main
 
-Ces tests automatisés couvrent le code exact des applications et un vrai
-serveur Supabase, mais pas un téléphone physique ni l'écran d'un PC réel.
-Après installation, refaites rapidement les scénarios 1, 2 et 3 sur votre
-téléphone et votre PC (environ 5 minutes) : écrire une note sur le téléphone,
-la voir sur le PC, la modifier, puis recommencer en mode avion.
+Les tests automatisés couvrent le code exact des applications et un vrai
+serveur Supabase (la même pile logicielle que l'offre en ligne, démarrée
+localement), mais pas :
+
+* **un téléphone physique ni l'écran d'un PC réel** — l'APK est compilé mais
+  n'a pas été lancé sur un appareil Android ; l'exécutable Windows est lancé
+  et installé en CI, sans interaction à l'écran ;
+* **votre projet Supabase en ligne** — il n'existe qu'une fois créé par vous ;
+* **les e-mails** (confirmation d'inscription, code de réinitialisation du mot
+  de passe) — ils dépendent des modèles d'e-mail de votre projet
+  (voir [INSTALLATION.md](INSTALLATION.md)) ;
+* l'ajout d'une image depuis la galerie du téléphone et l'export PDF (le
+  transfert et l'intégrité des fichiers sont testés, pas le sélecteur de
+  fichiers du système).
+
+Après installation, refaites les scénarios 1, 2 et 3 sur votre téléphone et
+votre PC (environ 5 minutes) : écrire une note sur le téléphone, la voir sur le
+PC, la modifier, puis recommencer en mode avion. Testez aussi une fois « mot de
+passe oublié ».
 
 ## Lancer les tests soi-même
 

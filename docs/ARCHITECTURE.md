@@ -187,7 +187,10 @@ L'éditeur permet de les consulter et d'en restaurer une.
   système (Android Keystore, protection des données Windows) via
   `flutter_secure_storage`, session chiffrée et authentifiée dans un fichier.
 * Suppression du compte : fichiers puis toutes les données (cascade SQL).
-* « Déconnecter tous les appareils » révoque toutes les sessions du compte.
+* « Déconnecter tous les appareils » révoque toutes les sessions du compte :
+  l'appareil courant est déconnecté immédiatement, les autres au prochain
+  renouvellement de leur jeton d'accès (au plus tard une heure après, durée de
+  vie par défaut d'un jeton Supabase).
 
 **Chiffrement de bout en bout : non proposé.** Les notes sont protégées en
 transit (HTTPS) et par l'isolation des comptes, mais le serveur peut techniquement
