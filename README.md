@@ -14,6 +14,19 @@
   <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/nabeiroriviereadriano-design/nothing-notes?label=t%C3%A9l%C3%A9charger&color=E60012" alt="Télécharger"></a>
 </p>
 
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/windows-sombre.png" width="860" alt="Nothing Notes sur Windows, thème sombre">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-liste-sombre.png" width="250" alt="Liste des notes sur Android">
+  &nbsp;
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-note-clair.png" width="250" alt="Éditeur sur Android, thème clair">
+  &nbsp;
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-connexion.png" width="250" alt="Connexion">
+</p>
+<p align="center"><sub>Captures générées automatiquement à partir du code actuel (branche <code>captures</code>).</sub></p>
+
 ---
 
 Écrivez une note sur votre téléphone, posez-le, ouvrez Nothing Notes sur votre

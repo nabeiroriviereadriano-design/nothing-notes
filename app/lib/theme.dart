@@ -332,11 +332,20 @@ class RedDot extends StatelessWidget {
   final double size;
   final Color? color;
   @override
-  Widget build(BuildContext context) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(color: color ?? NColors.red, shape: BoxShape.circle),
-      );
+  Widget build(BuildContext context) {
+    final c = color ?? NColors.red;
+    // Les points très clairs reçoivent un fin contour pour rester visibles en thème clair.
+    final light = c.computeLuminance() > 0.75;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: c,
+        shape: BoxShape.circle,
+        border: light ? Border.all(color: const Color(0xFFADADAD), width: 1) : null,
+      ),
+    );
+  }
 }
 
 /// Couleurs proposées pour les étiquettes et dossiers.

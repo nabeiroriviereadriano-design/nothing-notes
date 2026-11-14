@@ -963,33 +963,47 @@ class NoteEditorState extends State<NoteEditor> {
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Table(
-              defaultColumnWidth: const FixedColumnWidth(150),
+          LayoutBuilder(builder: (context, box) {
+            const minCol = 140.0;
+            final fits = cols * minCol <= box.maxWidth;
+            final table = Table(
+              defaultColumnWidth: fits ? const FlexColumnWidth() : const FixedColumnWidth(minCol),
               border: TableBorder.symmetric(inside: BorderSide(color: nn.line)),
               children: [
                 for (var r = 0; r < rows.length; r++)
                   TableRow(
-                    decoration: BoxDecoration(color: r == 0 ? nn.card : null),
+                    decoration: BoxDecoration(color: r == 0 ? nn.cardHover : null),
                     children: [
                       for (var c = 0; c < cols; c++)
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                           child: TextField(
                             controller: eb.cells![r][c],
                             readOnly: _readOnly,
                             maxLines: null,
                             onTap: () => setState(() => _focused = i),
-                            style: TextStyle(fontSize: 14, fontWeight: r == 0 ? FontWeight.w600 : FontWeight.w400),
-                            decoration: const InputDecoration.collapsed(hintText: ''),
+                            style: TextStyle(fontSize: 14, height: 1.4, fontWeight: r == 0 ? FontWeight.w600 : FontWeight.w400),
+                            decoration: const InputDecoration(
+                              isCollapsed: true,
+                              filled: false,
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              contentPadding: EdgeInsets.zero,
+                            ),
                           ),
                         ),
                     ],
                   ),
               ],
-            ),
-          ),
+            );
+            return fits
+                ? SizedBox(width: box.maxWidth, child: table)
+                : SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(width: cols * minCol, child: table),
+                  );
+          }),
           if (!_readOnly && _focused == i)
             Container(
               color: nn.card,
