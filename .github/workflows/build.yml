@@ -196,7 +196,9 @@ jobs:
 
   release:
     name: Publication GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publie automatiquement chaque nouvelle version (champ « version » de
+    # app/pubspec.yaml) lorsqu'elle est compilée avec succès sur main, ou sur un tag v*.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [version, app-tests, android, windows]
     runs-on: ubuntu-latest
     steps:
@@ -204,16 +206,28 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: out
-      - name: Créer la release
+      - name: Créer la release si elle n'existe pas encore
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           V=${{ needs.version.outputs.version }}
-          gh release create "v$V" out/android-apk/* out/windows-installer/* \
-            --title "Nothing Notes $V" \
-            --notes "Téléchargements :
-          - **Windows 10/11** : \`NothingNotes-Setup-$V.exe\` (installateur, sans droits administrateur) ou la version portable .zip
-          - **Android** : \`NothingNotes-$V.apk\`
+          if gh release view "v$V" >/dev/null 2>&1; then
+            echo "La release v$V existe déjà : rien à publier (augmentez la version dans app/pubspec.yaml)."
+            exit 0
+          fi
+          cat > notes.md <<NOTES
+          ## Téléchargements
 
-          Mise à jour : installez simplement la nouvelle version par-dessus l'ancienne, vos notes sont conservées." \
-            || gh release upload "v$V" out/android-apk/* out/windows-installer/* --clobber
+          | Plateforme | Fichier |
+          |---|---|
+          | **Windows 10 / 11** | \`NothingNotes-Setup-$V.exe\` — installateur, sans droits administrateur |
+          | Windows (sans installation) | \`NothingNotes-$V-portable.zip\` |
+          | **Android 7.0+** | \`NothingNotes-$V.apk\` |
+
+          Premier lancement : créez votre serveur gratuit en suivant [docs/INSTALLATION.md](https://github.com/${{ github.repository }}/blob/main/docs/INSTALLATION.md).
+
+          Mise à jour : installez la nouvelle version par-dessus l'ancienne, vos notes sont conservées.
+          NOTES
+          sed -i 's/^          //' notes.md
+          gh release create "v$V" out/android-apk/* out/windows-installer/* \
+            --target "$GITHUB_SHA" --title "Nothing Notes $V" --notes-file notes.md

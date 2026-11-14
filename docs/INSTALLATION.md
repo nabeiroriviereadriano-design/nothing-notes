@@ -93,14 +93,12 @@ sans les lignes `-----BEGIN/END-----`), `ANDROID_KEYSTORE_PASSWORD` et
 ## 3. Compiler et publier
 
 Les compilations sont automatiques à chaque envoi sur `main` (onglet
-**Actions**, artefacts téléchargeables). Pour publier une version :
+**Actions**). Lorsqu'une compilation réussit avec une version qui n'a pas encore
+été publiée (champ `version:` de [`app/pubspec.yaml`](../app/pubspec.yaml)),
+elle est publiée automatiquement. Pour sortir une mise à jour, augmentez
+simplement ce numéro (par exemple `1.0.1+2`) et envoyez la modification ; un
+tag `v1.0.1` fonctionne aussi.
 
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-ou **Actions → Build Android + Windows → Run workflow** puis créez la release.
 Une **Release GitHub** est créée avec :
 
 * `NothingNotes-Setup-1.0.0.exe` — installateur Windows 10/11 ;
