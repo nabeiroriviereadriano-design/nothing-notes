@@ -61,7 +61,7 @@ jobs:
         run: |
           {
             echo '### Analyse'; echo '```'; tail -n 60 analyze.log 2>/dev/null; echo '```'
-            echo '### Tests'; echo '```'; grep -E "\[E\]|Some tests failed|All tests passed|^\s+(Expected|Actual|Which)" test.log 2>/dev/null | tail -n 80; echo '```'
+            echo '### Tests'; echo '```'; (grep -E "\[E\]|Some tests failed|All tests passed|^\s+(Expected|Actual|Which)" test.log 2>/dev/null || true) | tail -n 80; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -96,7 +96,7 @@ jobs:
         run: |
           {
             echo '### Bout en bout Supabase'; echo '```'
-            grep -E "\[E\]|Some tests failed|All tests passed" packages/notes_core/e2e.log 2>/dev/null | tail -n 60
+            (grep -E "\[E\]|Some tests failed|All tests passed" packages/notes_core/e2e.log 2>/dev/null || true) | tail -n 60
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Journaux Supabase en cas d'échec

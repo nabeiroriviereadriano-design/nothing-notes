@@ -59,8 +59,8 @@ jobs:
         if: always()
         run: |
           {
-            echo '### Analyse'; echo '```'; grep -E "error|warning" analyze.log | head -n 80; tail -n 3 analyze.log; echo '```'
-            echo '### Tests'; echo '```'; grep -E "\[E\]|Some tests failed|All tests passed|Expected|Actual|Which|══" test.log | head -n 80; echo '```'
+            echo '### Analyse'; echo '```'; (grep -E " error | warning " analyze.log || true) | head -n 80; tail -n 3 analyze.log || true; echo '```'
+            echo '### Tests'; echo '```'; (grep -E "\[E\]|Some tests failed|All tests passed|Expected|Actual|Which" test.log || true) | head -n 80; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
   android:
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
