@@ -332,9 +332,15 @@ grant execute on function public.cleanup_my_ops() to authenticated;
 
 -- ---------------------------------------------------------------- stockage des pièces jointes
 -- Bucket privé ; chaque utilisateur n'accède qu'au dossier <son uid>/...
-insert into storage.buckets (id, name, public, file_size_limit)
-values ('attachments', 'attachments', false, 52428800)
-on conflict (id) do update set public = false, file_size_limit = 52428800;
+insert into storage.buckets (id, name, public)
+values ('attachments', 'attachments', false)
+on conflict (id) do update set public = false;
+
+-- Taille maximale d'un fichier : 50 Mo (plafond de l'offre gratuite).
+do $$ begin
+  update storage.buckets set file_size_limit = 52428800 where id = 'attachments';
+exception when undefined_column then null;
+end $$;
 
 drop policy if exists "nn_attachments_select" on storage.objects;
 drop policy if exists "nn_attachments_insert" on storage.objects;

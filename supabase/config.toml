@@ -1,0 +1,10 @@
+# Configuration de l'instance Supabase LOCALE utilisée par les tests de bout
+# en bout (CI : `supabase start`). Sans effet sur le projet Supabase en ligne.
+project_id = "nothing-notes"
+
+[auth]
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false

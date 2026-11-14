@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+defaults:
+  run:
+    shell: bash   # active « pipefail » : un échec n'est jamais masqué par un tube
+
 concurrency:
   group: tests-${{ github.ref }}
   cancel-in-progress: true
@@ -64,3 +68,41 @@ jobs:
         with:
           name: core-logs
           path: packages/notes_core/*.log
+
+  e2e-supabase:
+    name: Bout en bout (vrai backend Supabase)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Démarrer Supabase (PostgreSQL, Auth, Storage, Realtime) et appliquer la migration
+        run: supabase start -x studio,imgproxy,edge-runtime,logflare,vector,supavisor
+      - name: Scénarios 1 à 9 avec deux appareils et le vrai serveur
+        working-directory: packages/notes_core
+        run: |
+          eval "$(supabase status -o env --workdir ../..)"
+          export SUPABASE_URL="$API_URL"
+          export SUPABASE_ANON_KEY="${ANON_KEY:-$PUBLISHABLE_KEY}"
+          dart pub get
+          dart test test/sync_supabase_test.dart --concurrency=1 --reporter expanded --no-color 2>&1 | tee e2e.log
+      - name: Résumé
+        if: always()
+        run: |
+          {
+            echo '### Bout en bout Supabase'; echo '```'
+            grep -E "\[E\]|Some tests failed|All tests passed" packages/notes_core/e2e.log 2>/dev/null | tail -n 60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Journaux Supabase en cas d'échec
+        if: failure()
+        run: |
+          docker ps -a || true
+          for c in $(docker ps -a --format '{{.Names}}' | grep -E 'storage|auth|realtime|rest' || true); do
+            echo "=== $c"; docker logs --tail 60 "$c" 2>&1 || true
+          done
