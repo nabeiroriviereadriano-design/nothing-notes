@@ -444,7 +444,6 @@ class LanNode {
   /// Connexion entrante.
   Future<void> _onAccept(Socket socket) async {
     Wire? wire;
-    var pairAttempt = false;
     try {
       socket.setOption(SocketOption.tcpNoDelay, true);
       wire = Wire(socket);
@@ -469,7 +468,13 @@ class LanNode {
           throw HandshakeError('nopairing');
         }
         secret = utf8.encode(code);
-        pairAttempt = true;
+        // Chaque tentative compte dès qu'elle commence : à la 3e, le code est
+        // retiré immédiatement (il reste utilisable pour cette seule tentative).
+        _pairFailures++;
+        if (_pairFailures >= 3) {
+          stopPairing();
+          if (!_pairingEvents.isClosed) _pairingEvents.add(null);
+        }
       } else if (mode == 'session') {
         final key = store.peer(clientId) == null ? null : await keys.read(clientId);
         if (key == null) {
@@ -487,7 +492,6 @@ class LanNode {
       wire.sendJson({'pub': side.publicHex, 'tag': confirmTag(sk.confirm, 'server', transcript)});
       final c = await wire.readJson(timeout: const Duration(seconds: 12));
       if (!sameTag(c['tag'], confirmTag(sk.confirm, 'client', transcript))) throw HandshakeError('badsecret');
-      pairAttempt = false;
 
       final name = (m['name'] ?? '').toString();
       final plat = (m['plat'] ?? '').toString();
@@ -504,7 +508,6 @@ class LanNode {
       _attach(clientId, SecureChannel(wire, sendKey: sk.serverToClient, receiveKey: sk.clientToServer),
           tcpClient: false, address: wire.remoteAddress, port: clientPort, name: name, platform: plat);
     } catch (_) {
-      if (pairAttempt) _pairFailed();
       if (wire != null) {
         await wire.close();
       } else {
@@ -671,14 +674,6 @@ class LanNode {
   void stopPairing() {
     _pairCode = null;
     _pairUntil = null;
-  }
-
-  void _pairFailed() {
-    _pairFailures++;
-    if (_pairFailures >= 3) {
-      stopPairing();
-      if (!_pairingEvents.isClosed) _pairingEvents.add(null);
-    }
   }
 
   static (String, int) _parseAddress(String input) {

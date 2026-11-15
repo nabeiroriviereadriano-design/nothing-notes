@@ -70,11 +70,11 @@ class Device {
   }
 
   /// Ferme complètement l'application puis la rouvre (base conservée sur disque).
-  Future<void> restart() async {
+  Future<void> restart({bool online = true}) async {
     await node.dispose();
     store.close();
     _open();
-    await node.start();
+    if (online) await node.start();
   }
 
   Future<void> close() async {

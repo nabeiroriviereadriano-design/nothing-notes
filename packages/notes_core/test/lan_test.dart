@@ -130,8 +130,7 @@ void main() {
     expect(android.byTitle('Idée dans le métro').dirty, isTrue);
 
     // L'application est fermée puis rouverte sans réseau : rien n'est perdu.
-    await android.restart();
-    await android.goOffline();
+    await android.restart(online: false);
     expect(android.maybeByTitle('Idée dans le métro'), isNotNull);
     expect(android.store.pendingCount(), greaterThan(0));
     await Future<void>.delayed(const Duration(milliseconds: 600));
