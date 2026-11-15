@@ -174,15 +174,14 @@ class _Card extends StatelessWidget {
 }
 
 class _Tile extends StatelessWidget {
-  const _Tile(this.icon, this.label, this.onTap, {this.danger = false});
+  const _Tile(this.icon, this.label, this.onTap);
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  final bool danger;
   @override
   Widget build(BuildContext context) => ListTile(
-        leading: Icon(icon, color: danger ? NColors.red : null),
-        title: Text(label, style: TextStyle(color: danger ? NColors.red : null)),
+        leading: Icon(icon),
+        title: Text(label),
         trailing: Icon(Icons.chevron_right_rounded, color: context.nn.mid),
         onTap: onTap,
       );

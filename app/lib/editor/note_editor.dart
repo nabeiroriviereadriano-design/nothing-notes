@@ -260,8 +260,7 @@ class NoteEditorState extends State<NoteEditor> {
       ..favorite = fresh.favorite
       ..archived = fresh.archived
       ..trashedAt = fresh.trashedAt
-      ..updatedAt = fresh.updatedAt
-      ..version = fresh.version;
+      ..updatedAt = fresh.updatedAt;
     _applying = false;
     _focused = _blocks.indexWhere((b) => b.focus.hasFocus);
     setState(() {});
