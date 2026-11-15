@@ -12,7 +12,7 @@ import 'package:nothing_notes/theme.dart';
 ({AppController app, NotesRepository repo}) _setup() {
   final store = LocalStore.inMemory();
   final dir = Directory.systemTemp.createTempSync('nn_widget_');
-  final repo = NotesRepository(store: store, userId: 'u', filesDir: dir.path);
+  final repo = NotesRepository(store: store, filesDir: dir.path);
   final app = AppController()
     ..store = store
     ..repo = repo;
@@ -75,7 +75,7 @@ void main() {
     final saved = s.repo.note(n.id)!;
     expect(saved.blocks.map((b) => b.type), [BlockType.todo, BlockType.todo]);
     expect(saved.blocks.map((b) => b.text), ['Réviser les schémas', '**Exercices** Grafcet']);
-    expect(s.app.store!.pendingCount, greaterThan(0), reason: 'en file d\'attente de synchronisation');
+    expect(s.app.store!.get(EntityType.notes, n.id)!.rev, greaterThan(1), reason: 'enregistré dans la base locale');
 
     // Nouvelle note (Ctrl+N équivalent)
     s.app.newNote();

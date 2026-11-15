@@ -5,6 +5,7 @@ import '../state/app_controller.dart';
 import '../theme.dart';
 import 'common.dart';
 import 'dialogs.dart';
+import '../screens/devices_screen.dart';
 
 /// Colonne de navigation : notes, favoris, dossiers, étiquettes, archives,
 /// corbeille, paramètres.
@@ -115,7 +116,10 @@ class Sidebar extends StatelessWidget {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-            child: SyncBadge(status: app.syncStatus, onTap: () => app.engine?.syncNow()),
+            child: SyncBadge(
+              status: app.syncStatus,
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const DevicesScreen())),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),

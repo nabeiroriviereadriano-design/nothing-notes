@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'screens/auth_screen.dart';
 import 'screens/home_shell.dart';
 import 'state/app_controller.dart';
 import 'theme.dart';
@@ -52,12 +51,8 @@ class _Root extends StatelessWidget {
       page = const _Splash(key: ValueKey('splash'));
     } else if (app.fatalError != null) {
       page = _Fatal(key: const ValueKey('fatal'), message: app.fatalError!);
-    } else if (!app.hasServer) {
-      page = const ServerSetupScreen(key: ValueKey('setup'));
-    } else if (!app.signedIn) {
-      page = const AuthScreen(key: ValueKey('auth'));
     } else {
-      page = HomeShell(key: ValueKey('home-${app.user?.id}'));
+      page = const HomeShell(key: ValueKey('home'));
     }
     return AnimatedSwitcher(duration: const Duration(milliseconds: 250), child: page);
   }

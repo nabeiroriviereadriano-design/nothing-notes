@@ -200,9 +200,10 @@ Future<void> editTagDialog(BuildContext context, NotesRepository repo, {Tag? tag
 /// Comparaison des deux versions en conflit et choix de l'utilisateur.
 Future<void> showConflictDialog(BuildContext context, NotesRepository repo, String noteId) async {
   final rec = repo.store.get(EntityType.notes, noteId);
-  if (rec?.conflict == null) return;
-  final mine = Note.fromRow(rec!.data);
-  final other = Note.fromRow(rec.conflict!);
+  final otherRow = rec?.conflictRow;
+  if (rec == null || otherRow == null) return;
+  final mine = Note.fromRow(rec.data);
+  final other = Note.fromRow(otherRow);
   final choice = await showDialog<ConflictChoice>(
     context: context,
     builder: (c) {
@@ -253,7 +254,7 @@ Future<void> showConflictDialog(BuildContext context, NotesRepository repo, Stri
         actionsOverflowButtonSpacing: 8,
         actions: [
           TextButton(onPressed: () => Navigator.pop(c), child: const Text('Plus tard')),
-          OutlinedButton(onPressed: () => Navigator.pop(c, ConflictChoice.keepServer), child: const Text('Garder l\'autre')),
+          OutlinedButton(onPressed: () => Navigator.pop(c, ConflictChoice.keepOther), child: const Text('Garder l\'autre')),
           OutlinedButton(onPressed: () => Navigator.pop(c, ConflictChoice.keepMine), child: const Text('Garder la mienne')),
           FilledButton(onPressed: () => Navigator.pop(c, ConflictChoice.keepBoth), child: const Text('Garder les deux')),
         ],
@@ -277,7 +278,7 @@ class _HistoryDialog extends StatefulWidget {
 }
 
 class _HistoryDialogState extends State<_HistoryDialog> {
-  late final Future<List<NoteVersion>> _future = widget.repo.history(widget.noteId);
+  late final Future<List<NoteVersion>> _future = Future.value(widget.repo.history(widget.noteId));
   NoteVersion? _selected;
 
   @override
@@ -294,19 +295,12 @@ class _HistoryDialogState extends State<_HistoryDialog> {
             if (snap.connectionState != ConnectionState.done) {
               return const Center(child: CircularProgressIndicator(strokeWidth: 2));
             }
-            if (snap.hasError) {
-              return const EmptyState(
-                icon: Icons.cloud_off_outlined,
-                title: 'Historique indisponible',
-                subtitle: 'L\'historique est conservé sur le serveur : connectez-vous à Internet pour le consulter.',
-              );
-            }
             final versions = snap.data!;
             if (versions.isEmpty) {
               return const EmptyState(
                 icon: Icons.history_rounded,
                 title: 'Aucune version antérieure',
-                subtitle: 'Les versions précédentes apparaissent ici après chaque modification synchronisée.',
+                subtitle: 'Les versions précédentes apparaissent ici après chaque modification.',
               );
             }
             _selected ??= versions.first;
@@ -318,7 +312,12 @@ class _HistoryDialogState extends State<_HistoryDialog> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   title: Text(formatDate(v.savedAt), style: const TextStyle(fontSize: 14)),
                   subtitle: Text(
-                    v.reason == 'conflict' ? 'Version écartée lors d\'un conflit' : (v.title.isEmpty ? 'Sans titre' : v.title),
+                    switch (v.reason) {
+                      'conflict' => 'Version écartée lors d\'un conflit',
+                      'sync' || 'merge' => 'Avant une modification reçue d\'un autre appareil',
+                      'restore' => 'Avant une restauration',
+                      _ => v.title.isEmpty ? 'Sans titre' : v.title,
+                    },
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: n.mid, fontSize: 12.5),

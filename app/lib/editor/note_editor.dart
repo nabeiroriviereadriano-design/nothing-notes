@@ -189,8 +189,8 @@ class NoteEditorState extends State<NoteEditor> {
     if (rec == null) return;
     final storeRow = rec.data;
     final hadConflict = note!.hasConflict;
-    note!.conflictRow = rec.conflict;
-    note!.dirty = rec.dirty;
+    note!.conflictRow = rec.conflictRow;
+    note!.dirty = repo.store.isUnsynced(EntityType.notes, widget.noteId);
     if (asBool(storeRow['purged'])) {
       setState(() => note = null);
       return;
@@ -697,7 +697,10 @@ class NoteEditorState extends State<NoteEditor> {
                   [
                     'Modifiée ${formatDate(n.updatedAt)}',
                     if (folder != null) folder.name,
-                    n.hasConflict ? 'conflit à résoudre' : (n.dirty ? 'en attente de synchronisation' : 'synchronisée'),
+                    if (n.hasConflict)
+                      'conflit à résoudre'
+                    else if (AppScope.read(context).syncStatus.state != SyncState.unpaired)
+                      n.dirty ? 'pas encore transmise' : 'synchronisée',
                   ].join('  ·  '),
                   style: TextStyle(fontSize: 12, color: n.hasConflict ? NColors.red : nn.mid),
                 ),
@@ -1432,75 +1435,46 @@ class _ImageBlock extends StatefulWidget {
 }
 
 class _ImageBlockState extends State<_ImageBlock> {
-  Future<String?>? _path;
-
-  @override
-  void initState() {
-    super.initState();
-    _resolve();
-  }
-
-  void _resolve() {
-    final id = widget.attachmentId;
-    _path = id == null ? Future.value(null) : widget.repo.ensureFile(id).catchError((_) => null);
-  }
-
-  @override
-  void didUpdateWidget(_ImageBlock old) {
-    super.didUpdateWidget(old);
-    if (old.attachmentId != widget.attachmentId) _resolve();
-  }
-
   @override
   Widget build(BuildContext context) {
     final nn = context.nn;
-    final a = widget.attachmentId == null ? null : widget.repo.attachment(widget.attachmentId!);
-    return FutureBuilder<String?>(
-      future: _path,
-      builder: (c, snap) {
-        final path = snap.data;
-        Widget content;
-        if (path != null) {
-          content = ConstrainedBox(
+    final id = widget.attachmentId;
+    final a = id == null ? null : widget.repo.attachment(id);
+    // Le fichier arrive avec la synchronisation ; l'éditeur se reconstruit à son arrivée.
+    final path = id == null ? null : widget.repo.localPath(id);
+    final Widget content = path != null
+        ? ConstrainedBox(
             constraints: const BoxConstraints(maxHeight: 420),
             child: Image.file(File(path), fit: BoxFit.contain, errorBuilder: (_, __, ___) => _placeholder(nn, 'Image illisible')),
-          );
-        } else if (snap.connectionState != ConnectionState.done) {
-          content = _placeholder(nn, 'Chargement…');
-        } else {
-          content = _placeholder(nn, a?.deleted == true ? 'Image supprimée' : 'Image disponible après synchronisation',
-              retry: () => setState(_resolve));
-        }
-        return GestureDetector(
-          onTap: () {
-            widget.onSelect();
-            if (path != null) _openViewer(context, path);
-          },
-          onLongPress: widget.onDelete == null ? null : () => _menu(context, path, a),
-          onSecondaryTap: widget.onDelete == null ? null : () => _menu(context, path, a),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: widget.selected ? nn.mid : nn.line),
-              color: nn.card,
-            ),
-            clipBehavior: Clip.antiAlias,
-            alignment: Alignment.center,
-            child: content,
-          ),
-        );
+          )
+        : _placeholder(nn, a?.deleted == true ? 'Image supprimée' : 'Image en cours de réception depuis l\'autre appareil');
+    return GestureDetector(
+      onTap: () {
+        widget.onSelect();
+        if (path != null) _openViewer(context, path);
       },
+      onLongPress: widget.onDelete == null ? null : () => _menu(context, path, a),
+      onSecondaryTap: widget.onDelete == null ? null : () => _menu(context, path, a),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: widget.selected ? nn.mid : nn.line),
+          color: nn.card,
+        ),
+        clipBehavior: Clip.antiAlias,
+        alignment: Alignment.center,
+        child: content,
+      ),
     );
   }
 
-  Widget _placeholder(NTheme nn, String text, {VoidCallback? retry}) => SizedBox(
+  Widget _placeholder(NTheme nn, String text) => SizedBox(
         height: 120,
         child: Center(
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.image_outlined, color: nn.mid),
             const SizedBox(width: 10),
             Text(text, style: TextStyle(color: nn.mid, fontSize: 13)),
-            if (retry != null) IconButton(onPressed: retry, icon: Icon(Icons.refresh_rounded, color: nn.mid, size: 18)),
           ]),
         ),
       );
@@ -1552,18 +1526,10 @@ class _FileBlock extends StatefulWidget {
 }
 
 class _FileBlockState extends State<_FileBlock> {
-  bool _busy = false;
-
   Future<String?> _get() async {
-    setState(() => _busy = true);
-    try {
-      return await widget.repo.ensureFile(widget.attachmentId!);
-    } catch (e) {
-      if (mounted) toast(context, 'Fichier indisponible hors ligne');
-      return null;
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    final path = widget.repo.localPath(widget.attachmentId!);
+    if (path == null && mounted) toast(context, 'Fichier pas encore reçu de l\'autre appareil');
+    return path;
   }
 
   Future<void> _open() async {
@@ -1604,12 +1570,11 @@ class _FileBlockState extends State<_FileBlock> {
                 Text(
                   a == null
                       ? 'En attente de synchronisation'
-                      : '${formatBytes(a.sizeBytes)} · ${local != null ? 'sur cet appareil' : 'dans le cloud'}',
+                      : '${formatBytes(a.sizeBytes)}${local != null ? '' : ' · en cours de réception'}',
                   style: TextStyle(fontSize: 12, color: nn.mid),
                 ),
               ]),
             ),
-            if (_busy) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
             IconButton(
               tooltip: Platform.isWindows ? 'Ouvrir' : 'Enregistrer sous…',
               onPressed: a == null ? null : _open,

@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:notes_core/notes_core.dart';
-import 'package:nothing_notes/screens/auth_screen.dart';
+import 'package:nothing_notes/screens/devices_screen.dart';
 import 'package:nothing_notes/screens/home_shell.dart';
 import 'package:nothing_notes/state/app_controller.dart';
 import 'package:nothing_notes/theme.dart';
@@ -36,7 +36,7 @@ Future<void> _loadFonts() async {
 AppController _demo() {
   final store = LocalStore.inMemory();
   final dir = Directory.systemTemp.createTempSync('nn_shots_');
-  final repo = NotesRepository(store: store, userId: 'u', filesDir: dir.path);
+  final repo = NotesRepository(store: store, filesDir: dir.path);
   final travail = repo.createTag('Travail', color: '#E60012');
   final bts = repo.createTag('BTS', color: '#858585');
   final perso = repo.createTag('Perso', color: '#F5F5F5');
@@ -76,7 +76,7 @@ AppController _demo() {
     ..store = store
     ..repo = repo
     ..selectedNoteId = main.id
-    ..syncStatus = SyncStatus(SyncState.synced, lastSync: DateTime.now());
+    ..syncStatus = SyncStatus(SyncState.synced, peers: 1, connected: 1, lastSync: DateTime.now());
   return app;
 }
 
@@ -105,5 +105,21 @@ void main() {
     return _shot(t, 'android-liste-sombre', const Size(400, 860), Brightness.dark, const HomeShell(), app);
   });
   testWidgets('android-note-clair', (t) => _shot(t, 'android-note-clair', const Size(400, 860), Brightness.light, const HomeShell(), _demo()));
-  testWidgets('android-connexion', (t) => _shot(t, 'android-connexion', const Size(400, 860), Brightness.dark, const AuthScreen(), _demo()));
+  testWidgets('android-appareils', (t) => _shot(t, 'android-appareils', const Size(400, 860), Brightness.dark, const DevicesScreen(), _demo()));
+  testWidgets('windows-code', (t) => _shot(
+      t,
+      'windows-code',
+      const Size(900, 560),
+      Brightness.dark,
+      const Scaffold(
+        body: Center(
+          child: Card(
+            child: Padding(
+              padding: EdgeInsets.all(32),
+              child: PairingCodeView(code: '482915', remaining: Duration(minutes: 4, seconds: 37)),
+            ),
+          ),
+        ),
+      ),
+      _demo()));
 }

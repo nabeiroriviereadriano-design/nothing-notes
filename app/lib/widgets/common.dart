@@ -67,9 +67,10 @@ class SyncBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final n = context.nn;
     final (IconData icon, Color color) = switch (status.state) {
+      SyncState.unpaired => (Icons.devices_other_outlined, n.mid),
       SyncState.synced => (Icons.cloud_done_outlined, n.mid),
       SyncState.syncing => (Icons.sync_rounded, n.fg),
-      SyncState.offline => (Icons.cloud_off_outlined, n.mid),
+      SyncState.offline => (Icons.wifi_off_rounded, n.mid),
       SyncState.pending => (Icons.cloud_upload_outlined, n.fg),
       SyncState.error => (Icons.error_outline_rounded, NColors.red),
     };

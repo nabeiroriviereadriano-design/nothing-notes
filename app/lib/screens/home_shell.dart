@@ -8,6 +8,7 @@ import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/note_list.dart';
 import '../widgets/sidebar.dart';
+import 'devices_screen.dart';
 import 'settings_screen.dart';
 
 /// Écran principal, adapté à la largeur disponible :
@@ -32,8 +33,9 @@ class _HomeShellState extends State<HomeShell> {
 
   void _saveNow() {
     _editorKey.currentState?.flush();
-    AppScope.read(context).engine?.syncNow();
-    toast(context, 'Enregistré sur cet appareil · synchronisation lancée');
+    final app = AppScope.read(context);
+    app.syncNow();
+    toast(context, app.peers.isEmpty ? 'Enregistré sur cet appareil' : 'Enregistré sur cet appareil · synchronisation lancée');
   }
 
   void _search() {
@@ -49,6 +51,11 @@ class _HomeShellState extends State<HomeShell> {
   void _openSettings() {
     _editorKey.currentState?.flush();
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SettingsScreen()));
+  }
+
+  void _openDevices() {
+    _editorKey.currentState?.flush();
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const DevicesScreen()));
   }
 
   void _open(Note n) {
@@ -252,7 +259,7 @@ class _HomeShellState extends State<HomeShell> {
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600)),
                         ),
-                        SyncBadge(status: app.syncStatus, compact: true, onTap: () => _syncSheet(app)),
+                        SyncBadge(status: app.syncStatus, compact: true, onTap: _openDevices),
                         IconButton(
                           tooltip: 'Rechercher',
                           onPressed: () {
@@ -269,9 +276,11 @@ class _HomeShellState extends State<HomeShell> {
                           icon: const Icon(Icons.more_vert_rounded),
                           onSelected: (v) {
                             if (v == 'settings') _openSettings();
-                            if (v == 'sync') app.engine?.syncNow();
+                            if (v == 'devices') _openDevices();
+                            if (v == 'sync') app.syncNow();
                           },
                           itemBuilder: (c) => const [
+                            PopupMenuItem(value: 'devices', child: Text('Appareils')),
                             PopupMenuItem(value: 'sync', child: Text('Synchroniser maintenant')),
                             PopupMenuItem(value: 'settings', child: Text('Paramètres')),
                           ],
@@ -289,62 +298,6 @@ class _HomeShellState extends State<HomeShell> {
                   ]),
           ),
         ),
-      ),
-    );
-  }
-
-  void _syncSheet(AppController app) {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (c) => ListenableBuilder(
-        listenable: app,
-        builder: (c, _) {
-          final s = app.syncStatus;
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const DotTitle('Synchro', size: 22),
-                const SizedBox(height: 14),
-                SyncBadge(status: s),
-                if (s.lastSync != null)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 10, top: 4),
-                    child: Text('Dernière synchronisation : ${formatDate(s.lastSync!.toUtc())}',
-                        style: TextStyle(color: c.nn.mid, fontSize: 13)),
-                  ),
-                if (s.message != null && s.state != SyncState.synced)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 10, top: 4),
-                    child: Text(s.message!, style: TextStyle(color: c.nn.mid, fontSize: 12)),
-                  ),
-                const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: () => app.engine?.syncNow(),
-                    icon: const Icon(Icons.sync_rounded),
-                    label: const Text('Synchroniser maintenant'),
-                  ),
-                ),
-                if (s.conflicts > 0) ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: () {
-                        Navigator.pop(c);
-                        app.showView(NavView.all);
-                        app.setFilter(NoteFilter.unsynced);
-                      },
-                      child: const Text('Voir les notes en conflit'),
-                    ),
-                  ),
-                ],
-              ]),
-            ),
-          );
-        },
       ),
     );
   }

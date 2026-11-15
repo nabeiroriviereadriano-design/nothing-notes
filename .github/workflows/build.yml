@@ -2,7 +2,7 @@ name: Build Android + Windows
 
 on:
   push:
-    branches: [main]
+    branches: [main, lan]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -13,13 +13,6 @@ concurrency:
 
 permissions:
   contents: write
-
-env:
-  # Adresse et clé PUBLIQUE (anon) du projet Supabase, à définir dans
-  # Settings > Secrets and variables > Actions. Facultatives : sans elles,
-  # l'application demande l'adresse du serveur au premier lancement.
-  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-  SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
 
 jobs:
   version:
@@ -65,7 +58,7 @@ jobs:
           path: app/screenshot_test/goldens/*.png
           if-no-files-found: warn
       - name: Publier les captures (branche « captures »)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/lan')
         working-directory: app/screenshot_test/goldens
         run: |
           git init -q -b captures
@@ -103,8 +96,7 @@ jobs:
         run: |
           flutter build apk --release \
             --build-name=${{ needs.version.outputs.version }} --build-number=${{ github.run_number }} \
-            --dart-define=APP_VERSION=${{ needs.version.outputs.version }} \
-            --dart-define=SUPABASE_URL="$SUPABASE_URL" --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=APP_VERSION=${{ needs.version.outputs.version }}
       - name: Signature
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -152,8 +144,7 @@ jobs:
         run: |
           flutter build windows --release \
             --build-name=${{ needs.version.outputs.version }} --build-number=${{ github.run_number }} \
-            --dart-define=APP_VERSION=${{ needs.version.outputs.version }} \
-            --dart-define=SUPABASE_URL="$SUPABASE_URL" --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+            --dart-define=APP_VERSION=${{ needs.version.outputs.version }}
       - name: Bibliothèques Visual C++ (application autonome)
         run: |
           REL=app/build/windows/x64/runner/Release
