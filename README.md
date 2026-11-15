@@ -5,7 +5,7 @@
 <h1 align="center">NOTHING NOTES</h1>
 
 <p align="center">
-  Prise de notes minimaliste · Android + Windows · synchronisation réelle, hors ligne, gratuite
+  Prise de notes minimaliste · Android + Windows · synchronisation directe, sans compte ni serveur
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
   &nbsp;
   <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-note-clair.png" width="250" alt="Éditeur sur Android, thème clair">
   &nbsp;
-  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-connexion.png" width="250" alt="Connexion">
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-appareils.png" width="250" alt="Association des appareils">
 </p>
 <p align="center"><sub>Captures générées automatiquement à partir du code actuel (branche <code>captures</code>).</sub></p>
 
@@ -31,17 +31,20 @@
 
 Écrivez une note sur votre téléphone, posez-le, ouvrez Nothing Notes sur votre
 PC : la note est là. Modifiez-la sur le PC, elle est à jour sur le téléphone.
-Sans export, sans copier-coller, même après avoir travaillé hors ligne.
+Sans compte, sans serveur, sans export : les appareils se parlent directement
+sur votre réseau (Wi-Fi, câble Ethernet ou USB), après une association unique
+par un code à 6 chiffres.
 
 ## Fonctionnalités
 
 **Synchronisation**
-- Bidirectionnelle et automatique entre tous les appareils d'un même compte (temps réel)
-- Entièrement utilisable **hors ligne** : file d'attente persistante, envoi automatique au retour du réseau
+- Directe entre vos appareils sur le même réseau (Wi-Fi, Ethernet, partage de connexion USB), en une à deux secondes
+- **Association par un code à 6 chiffres**, une seule fois ; aucun compte, aucun serveur, rien sur Internet
+- Échanges **chiffrés** (échange de clés authentifié + ChaCha20-Poly1305)
+- Entièrement utilisable **hors ligne** : les modifications partent automatiquement quand les appareils se retrouvent
 - **Conflits** détectés sans jamais écraser une version : fusion automatique quand c'est sans risque, choix proposé sinon
-- Synchronisation différentielle et paginée, reprise après coupure, anti-doublons
-- Images et pièces jointes synchronisées
-- Indicateur d'état permanent : synchronisé, en cours, hors ligne, en attente, erreur, conflit
+- Images et pièces jointes transférées et vérifiées (SHA-256)
+- Indicateur d'état permanent : synchronisé, en cours, hors de portée, en attente, erreur, conflit
 
 **Éditeur**
 - Titres, sous-titres, citations, listes à puces et numérotées, cases à cocher
@@ -63,43 +66,39 @@ installateur sans droits administrateur, mise à jour et **désinstalleur** prop
 
 **Export** : TXT, Markdown, HTML et PDF.
 
-**Comptes** : inscription, connexion, mot de passe oublié, déconnexion de tous
-les appareils, suppression du compte.
+**Appareils** : association par code, liste des appareils associés et de leur
+état, retrait d'un appareil.
 
 ## Démarrer
 
-1. **Serveur** (gratuit, 10 min) : créez un projet Supabase et exécutez le script SQL
-   → [docs/INSTALLATION.md](docs/INSTALLATION.md)
-2. **Applications** : téléchargez l'installateur Windows et l'APK depuis
-   [Releases](../../releases/latest).
-3. Créez votre compte sur un appareil, connectez-vous sur l'autre. C'est tout.
+1. Téléchargez l'installateur Windows et l'APK depuis [Releases](../../releases/latest).
+2. Sur le PC : *Appareils → Afficher un code*. Sur le téléphone : *Appareils → Saisir un code*.
+3. C'est tout. Guide détaillé : [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ## Coût
 
-**0 €.** Supabase Free (500 Mo de notes, 1 Go de fichiers) et GitHub Actions
-(compilation gratuite pour un dépôt public). Aucune carte bancaire.
+**0 €**, pour toujours : pas de serveur à payer ni à entretenir. GitHub Actions
+compile gratuitement les versions.
 
 ## Documentation
 
 | | |
 |---|---|
-| [INSTALLATION.md](docs/INSTALLATION.md) | serveur, secrets GitHub, compilation, installation, mise à jour, désinstallation |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | choix techniques comparés, synchronisation, conflits, sécurité |
-| [API.md](docs/API.md) | tables, format des notes, fonctions serveur |
+| [INSTALLATION.md](docs/INSTALLATION.md) | installation, association, mise à jour, désinstallation, sauvegarde |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | choix techniques, découverte, sécurité de l'association, synchronisation, conflits |
 | [TESTS.md](docs/TESTS.md) | scénarios testés et résultats |
-| [SAUVEGARDE.md](docs/SAUVEGARDE.md) | sauvegarde chiffrée automatique et restauration |
 
 ## Technologies
 
 Flutter (une seule base de code native pour Android et Windows) · Dart ·
-SQLite + FTS5 · Supabase (PostgreSQL, Auth, Storage, Realtime) · Inno Setup ·
-GitHub Actions.
+SQLite + FTS5 · TCP/UDP sur le réseau local · SPEKE (RFC 3526) ·
+ChaCha20-Poly1305 · Inno Setup · GitHub Actions.
 
 ## Confidentialité
 
-Les notes transitent en HTTPS et chaque compte n'accède qu'à ses propres données
-(règles de sécurité vérifiées par la base). Elles ne sont **pas chiffrées de bout
-en bout** : l'administrateur du projet Supabase peut techniquement y accéder.
+Vos notes restent sur vos appareils et ne transitent que directement entre
+appareils associés, par une connexion chiffrée sur votre réseau local. Aucun
+compte, aucun serveur, aucune télémétrie.
 
 ## Identité graphique
 

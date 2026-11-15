@@ -61,7 +61,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
               Expanded(
                 child: FilledButton.icon(
                   onPressed: () => showPairingCode(context),
-                  icon: const Icon(Icons.qr_code_2_rounded),
+                  icon: const Icon(Icons.password_rounded),
                   label: const Text('Afficher un code'),
                 ),
               ),

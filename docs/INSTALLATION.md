@@ -1,165 +1,129 @@
-# Installation complète (100 % gratuite)
+# Installation et association des appareils
 
-Durée : environ 15 minutes, une seule fois. Tout repose sur des offres gratuites :
-**Supabase Free** (base de données, comptes, fichiers, temps réel) et
-**GitHub Actions** (compilation de l'APK et de l'installateur Windows, gratuite et
-illimitée pour un dépôt public).
+Aucun compte, aucun serveur, aucune configuration en ligne : installez
+l'application sur chaque appareil, puis associez-les une fois avec un code.
 
----
+## 1. Installer
 
-## 1. Créer le serveur Supabase
+Téléchargez les fichiers depuis la page **[Releases](../../../releases/latest)**.
 
-1. Créez un compte sur <https://supabase.com> (gratuit, sans carte bancaire).
-2. **New project** → nom `nothing-notes`, choisissez un mot de passe de base de
-   données (gardez-le, il sert aux sauvegardes) et la région **West EU (Paris)**
-   ou la plus proche → **Create new project**.
-3. Une fois le projet prêt : **SQL Editor** → **New query** → collez tout le
-   contenu de [`supabase/migrations/20261114000000_nothing_notes.sql`](../supabase/migrations/20261114000000_nothing_notes.sql)
-   → **Run**. Le message `Success. No rows returned` confirme l'installation
-   (tables, règles de sécurité, fonctions de synchronisation, stockage des
-   pièces jointes, temps réel). Le script peut être relancé sans risque.
+### Windows 10 / 11
 
-### Comptes et e-mails
+1. Lancez `NothingNotes-Setup-x.y.z.exe`. **Aucun droit administrateur** n'est
+   demandé : l'application s'installe dans `%LOCALAPPDATA%\Programs\Nothing Notes`.
+2. Windows SmartScreen peut afficher « Windows a protégé votre ordinateur »
+   (installateur non signé par un certificat payant) : **Informations
+   complémentaires → Exécuter quand même**.
+3. **Au premier lancement, le pare-feu Windows demande l'autorisation pour
+   Nothing Notes : cochez « Réseaux privés » puis Autoriser.** Sans cela, le
+   téléphone ne peut pas joindre le PC.
 
-Dans **Authentication** :
+Version sans installation : `NothingNotes-x.y.z-portable.zip`.
 
-* **Sign In / Providers → Email** : laissez *Email* activé.
-* Choisissez **l'une** des deux options pour la confirmation d'inscription :
-  * **Simple** : désactivez *Confirm email*. Le compte est utilisable
-    immédiatement après l'inscription.
-  * **Avec vérification** : laissez-la activée et ajoutez le code dans le
-    modèle d'e-mail (étape suivante) ; l'application demande alors le code reçu.
-* **Emails → Templates** : pour que la réinitialisation du mot de passe
-  fonctionne depuis l'application (Android comme Windows), ajoutez le code au
-  modèle **Reset Password** (et **Confirm signup** si la vérification est
-  activée), par exemple :
+### Android (7.0 et plus récent)
 
-  ```html
-  <h2>Nothing Notes</h2>
-  <p>Votre code : <strong>{{ .Token }}</strong></p>
-  ```
+Téléchargez `NothingNotes-x.y.z.apk` sur le téléphone, ouvrez-le et autorisez
+l'installation depuis cette source si Android le demande.
 
-> L'offre gratuite limite l'envoi d'e-mails à quelques messages par heure, ce
-> qui suffit pour un usage personnel. Pour davantage, configurez un serveur SMTP
-> gratuit (Brevo, Resend…) dans *Authentication → Emails → SMTP Settings*.
+## 2. Associer le téléphone et le PC (une seule fois)
 
-### Récupérer l'adresse et la clé publique
+Les deux appareils doivent être **sur le même réseau** : même box Wi-Fi, PC
+branché en Ethernet sur la même box, ou téléphone relié au PC par câble USB
+avec le partage de connexion activé.
 
-**Project Settings → API** (ou *Data API* / *API Keys*) :
+1. Sur le **PC** : *Paramètres → Appareils associés* (ou cliquez l'icône de
+   synchronisation en bas à gauche) → **Afficher un code**. Un code à
+   6 chiffres s'affiche (valable 5 minutes).
+2. Sur le **téléphone** : *menu ⋮ → Appareils* → **Saisir un code** → tapez
+   les 6 chiffres.
+3. C'est fait : les notes des deux appareils se rejoignent. L'association est
+   mémorisée, il n'y a plus jamais de code à saisir.
 
-* **Project URL** : `https://xxxxxxxx.supabase.co`
-* **anon / publishable key** : la clé **publique** (commence par `eyJ…` ou `sb_publishable_…`).
+On peut aussi faire l'inverse (code affiché sur le téléphone, saisi sur le PC),
+et associer autant d'appareils que voulu (tablette, deuxième PC…). Les
+modifications circulent de proche en proche : un appareil associé au PC reçoit
+aussi ce qui vient du téléphone.
 
-⚠️ N'utilisez jamais la clé `service_role` / `secret` dans l'application ni sur
-GitHub : elle contourne toutes les règles de sécurité. L'application n'en a pas
-besoin.
+**L'appareil n'est pas trouvé ?** Vérifiez que les deux sont sur le même réseau
+et que Nothing Notes est ouvert des deux côtés. Sur le PC, autorisez Nothing
+Notes dans le pare-feu (*Sécurité Windows → Pare-feu → Autoriser une
+application*). Essayez aussi dans l'autre sens (code affiché sur le
+téléphone). En dernier recours, dans la fenêtre « Saisir un code », touchez
+*Saisir son adresse* et tapez l'adresse affichée sur l'autre appareil dans
+*Appareils → Cet appareil*.
 
----
+## 3. Au quotidien
 
-## 2. Relier GitHub au serveur
+* Écrivez sur un appareil : dès que les deux sont sur le même réseau avec
+  l'application ouverte, la note apparaît sur l'autre en une à deux secondes.
+* Sans réseau commun (dans le train, au travail…), tout reste utilisable. Les
+  modifications attendent et partent **automatiquement** dès que les appareils
+  se retrouvent.
+* L'icône de synchronisation indique l'état : *synchronisé*, *synchronisation
+  en cours*, *appareil hors de portée*, *modifications en attente*, *erreur*,
+  *conflit à résoudre*, ou *aucun appareil associé*.
+* Si la même note a été modifiée au même endroit sur les deux appareils
+  pendant qu'ils étaient séparés, rien n'est écrasé : un bandeau propose de
+  garder une version, l'autre, ou les deux.
 
-Dans le dépôt GitHub : **Settings → Secrets and variables → Actions → New repository secret** :
+## 4. Mettre à jour
 
-| Secret | Valeur | Rôle |
-|---|---|---|
-| `SUPABASE_URL` | Project URL | intégrée à l'APK et à l'installateur |
-| `SUPABASE_ANON_KEY` | clé publique anon | idem (clé publique, sans danger) |
+Installez simplement la nouvelle version par-dessus l'ancienne (Windows et
+Android) : notes et associations sont conservées. *Paramètres → Rechercher une
+mise à jour* indique si une nouvelle version est publiée.
 
-Ces deux secrets sont facultatifs : sans eux, l'application demande l'adresse
-du serveur au premier lancement (écran *Serveur de synchronisation*).
+> Android : tant que le dépôt n'a pas de clé de signature fixe (voir plus bas),
+> chaque APK publié est signé avec une clé différente et Android refuse la mise
+> à jour par-dessus. Il faut alors désinstaller puis réinstaller, et refaire
+> l'association ; les notes reviennent depuis le PC à la première synchronisation.
 
-Ils activent aussi la tâche gratuite [`keepalive.yml`](../.github/workflows/keepalive.yml)
-qui interroge le serveur tous les 3 jours : les projets Supabase gratuits sont
-mis en pause après une semaine sans activité.
+## 5. Désinstaller
 
-### Signature Android stable (recommandé)
+* **Windows** : *Paramètres Windows → Applications → Nothing Notes →
+  Désinstaller*, ou *Menu Démarrer → Nothing Notes → Désinstaller*. Le
+  désinstalleur demande s'il faut **conserver ou effacer** les notes stockées
+  sur ce PC (`%APPDATA%\NothingNotes`).
+* **Android** : appui long sur l'icône → *Désinstaller* (efface les notes du
+  téléphone ; celles déjà synchronisées restent sur le PC).
 
-Pour pouvoir installer les mises à jour de l'APK par-dessus l'ancienne
-version, l'APK doit toujours être signé avec la même clé. Créez-la une fois
-(Java installé) :
+Pensez à retirer l'appareil désinstallé dans *Appareils* sur les autres.
 
-```bash
-keytool -genkeypair -v -keystore nothingnotes.jks -alias nothingnotes \
-  -keyalg RSA -keysize 4096 -validity 10000
-base64 -w0 nothingnotes.jks > nothingnotes.jks.b64   # Windows : certutil -encode nothingnotes.jks nothingnotes.jks.b64
-```
+## 6. Sauvegarde
 
-Puis ajoutez les secrets `ANDROID_KEYSTORE_BASE64` (contenu du fichier `.b64`
-sans les lignes `-----BEGIN/END-----`), `ANDROID_KEYSTORE_PASSWORD` et
-`ANDROID_KEY_ALIAS` (`nothingnotes`). Conservez le fichier `.jks` en lieu sûr.
+Chaque appareil associé garde **une copie complète** de toutes les notes : la
+perte d'un appareil ne fait rien perdre tant qu'un autre a été synchronisé.
+Pour une copie supplémentaire : *Paramètres → Exporter toutes les notes*
+(Markdown ou PDF).
 
----
+## Pour le développeur
 
-## 3. Compiler et publier
+### Compiler soi-même
 
-Les compilations sont automatiques à chaque envoi sur `main` (onglet
-**Actions**). Lorsqu'une compilation réussit avec une version qui n'a pas encore
-été publiée (champ `version:` de [`app/pubspec.yaml`](../app/pubspec.yaml)),
-elle est publiée automatiquement. Pour sortir une mise à jour, augmentez
-simplement ce numéro (par exemple `1.0.1+2`) et envoyez la modification ; un
-tag `v1.0.1` fonctionne aussi.
-
-Une **Release GitHub** est créée avec :
-
-* `NothingNotes-Setup-1.0.0.exe` — installateur Windows 10/11 ;
-* `NothingNotes-1.0.0-portable.zip` — version sans installation ;
-* `NothingNotes-1.0.0.apk` — Android 7.0 et plus récent.
-
-### Compiler soi-même (facultatif)
-
-Prérequis : [Flutter](https://docs.flutter.dev/get-started/install) (canal stable),
-Visual Studio 2022 « Développement Desktop en C++ » pour Windows, Android Studio
-pour Android.
+Prérequis : [Flutter](https://docs.flutter.dev/get-started/install) (canal
+stable), Visual Studio 2022 « Développement Desktop en C++ » pour Windows,
+Android Studio pour Android, [Inno Setup 6](https://jrsoftware.org/isinfo.php)
+pour l'installateur.
 
 ```bash
 tools/prepare_platforms.sh          # génère android/ et windows/ (modèle Flutter officiel)
 cd app
-flutter build windows --release --dart-define=SUPABASE_URL=https://xxx.supabase.co --dart-define=SUPABASE_ANON_KEY=eyJ...
-flutter build apk --release        --dart-define=SUPABASE_URL=https://xxx.supabase.co --dart-define=SUPABASE_ANON_KEY=eyJ...
-iscc installer\NothingNotes.iss     # installateur (Inno Setup 6, gratuit)
+flutter build windows --release
+flutter build apk --release
+cd .. && iscc installer\NothingNotes.iss
 ```
 
----
+### Publier une version
 
-## 4. Installer les applications
+Augmentez `version:` dans [`app/pubspec.yaml`](../app/pubspec.yaml) et envoyez
+sur `main` : GitHub Actions compile, teste et publie la release automatiquement.
 
-### Windows 10 / 11
+### Signature Android stable (recommandé)
 
-1. Téléchargez `NothingNotes-Setup-x.y.z.exe` depuis la page *Releases*.
-2. Double-cliquez. **Aucun droit administrateur n'est demandé** : l'application
-   s'installe dans `%LOCALAPPDATA%\Programs\Nothing Notes`, avec un raccourci
-   dans le menu Démarrer (et sur le bureau si vous le cochez).
-3. Windows SmartScreen peut afficher « Windows a protégé votre ordinateur »
-   (installateur non signé par un certificat payant) : **Informations
-   complémentaires → Exécuter quand même**.
+```bash
+keytool -genkeypair -v -keystore nothingnotes.jks -alias nothingnotes -keyalg RSA -keysize 4096 -validity 10000
+base64 -w0 nothingnotes.jks > nothingnotes.jks.b64
+```
 
-**Mise à jour** : lancez simplement le nouvel installateur, il remplace
-l'ancienne version et conserve vos notes. *Paramètres → Rechercher une mise à
-jour* indique si une nouvelle version est publiée.
-
-**Désinstallation** : *Paramètres Windows → Applications → Nothing Notes →
-Désinstaller*, ou *Menu Démarrer → Nothing Notes → Désinstaller Nothing Notes*.
-Le désinstalleur demande s'il faut **conserver ou effacer** les notes stockées
-sur ce PC (`%APPDATA%\NothingNotes`). Les notes synchronisées restent sur votre
-compte dans tous les cas.
-
-### Android
-
-1. Téléchargez l'APK sur le téléphone, ouvrez-le et autorisez l'installation
-   depuis cette source si Android le demande.
-2. Mise à jour : installez le nouvel APK par-dessus (même clé de signature).
-3. Désinstallation : appui long sur l'icône → *Désinstaller* (efface les
-   données locales du téléphone ; les notes synchronisées restent sur le compte).
-
----
-
-## 5. Premier lancement
-
-1. Ouvrez Nothing Notes sur le téléphone → **Créer un compte** (e-mail + mot de passe).
-2. Ouvrez Nothing Notes sur le PC → **Se connecter** avec le même compte.
-3. Écrivez une note sur le téléphone : elle apparaît sur le PC en une ou deux
-   secondes (temps réel), et inversement. Hors ligne, tout reste utilisable ;
-   les modifications partent automatiquement au retour du réseau.
-
-L'icône de nuage indique l'état : synchronisé, synchronisation en cours, hors
-ligne, modifications en attente, erreur, ou conflit à résoudre.
+Dans le dépôt GitHub : *Settings → Secrets and variables → Actions* → ajoutez
+`ANDROID_KEYSTORE_BASE64` (contenu du `.b64`), `ANDROID_KEYSTORE_PASSWORD` et
+`ANDROID_KEY_ALIAS` (`nothingnotes`). Conservez le fichier `.jks` en lieu sûr.

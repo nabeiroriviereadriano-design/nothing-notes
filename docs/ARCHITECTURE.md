@@ -1,203 +1,177 @@
 # Architecture technique
 
-## 1. Choix des technologies
+## 1. Choix
 
-### Backend
+| Sujet | Choix | Raison |
+|---|---|---|
+| Applications | **Flutter**, une seule base de code Dart | application native Android + Windows (pas de page web), règles métier partagées |
+| Base locale | **SQLite** + recherche plein texte FTS5 | tout fonctionne sans réseau, recherche instantanée |
+| Synchronisation | **directe entre appareils** sur le réseau local | aucun compte, aucun serveur, aucune donnée sur Internet, gratuit |
+| Association | code à 6 chiffres + échange de clés authentifié (SPEKE) | simple à saisir, résistant aux écoutes et aux essais hors ligne |
+| Chiffrement | ChaCha20-Poly1305, clés éphémères par session | confidentialité et intégrité de chaque message |
 
-| Critère | **Supabase** (retenu) | Firebase | Backend personnalisé |
-|---|---|---|---|
-| Coût pour un usage personnel | Gratuit (500 Mo de base, 1 Go de fichiers) | Gratuit (Spark), Storage désormais lié à un compte de facturation | Hébergement à trouver et à maintenir |
-| Base de données | PostgreSQL relationnel, transactions, fonctions SQL | NoSQL (Firestore), règles limitées pour une logique de version | Au choix |
-| Contrôle de version / conflits côté serveur | Fonction SQL transactionnelle (`sync_push`) | Transactions Firestore, logique répartie dans les règles | À écrire entièrement |
-| Isolation des comptes | Row Level Security vérifiée par PostgreSQL | Règles de sécurité Firestore | À écrire |
-| Comptes, fichiers, temps réel | Inclus | Inclus | À écrire |
-| Client pour Windows | Bibliothèque Dart officielle, pure Dart | Pas de SDK officiel Windows pour Flutter (Firestore) | — |
-| Réversibilité | Open source, auto-hébergeable, export SQL standard | Propriétaire | Totale |
+La version 1 synchronisait par un serveur en ligne (Supabase). Elle a été
+remplacée, à la demande, par cette synchronisation locale sans compte.
 
-**Supabase** est retenu : un seul service couvre les huit composants demandés
-(base distante, authentification, stockage objet, temps réel), la logique de
-synchronisation tient dans une fonction PostgreSQL testable, et le client Dart
-fonctionne à l'identique sur Android et Windows.
-
-*Limite de l'offre gratuite* : un projet inactif 7 jours est mis en pause ; la
-tâche GitHub `keepalive.yml` l'évite. Pas de sauvegarde automatique incluse :
-voir [SAUVEGARDE.md](SAUVEGARDE.md).
-
-### Applications
-
-| Critère | **Flutter** (retenu) | Kotlin + C#/WinUI | Electron / Tauri |
-|---|---|---|---|
-| Une seule base de code Android + Windows | Oui | Non (deux applications) | Android impossible ou limité |
-| Application Windows native | Oui (moteur de rendu natif, exécutable Win32, pas de page web) | Oui | Non (page web dans une fenêtre) |
-| Règles métier partagées | Oui (même code Dart) | Dupliquées | — |
-
-Une seule base de code Dart : la même logique de synchronisation, de fusion et
-de stockage tourne sur les deux plateformes et dans les tests automatisés.
-
-### Base locale
-
-SQLite (via `sqlite3`, avec la recherche plein texte FTS5) sur chaque appareil.
+**Limite assumée** : deux appareils ne se synchronisent que lorsqu'ils sont
+sur le même réseau avec l'application ouverte. Entre-temps, chacun fonctionne
+normalement et les modifications attendent.
 
 ## 2. Vue d'ensemble
 
 ```mermaid
 flowchart LR
-  subgraph Android
-    UA[Interface Flutter] --> CA[notes_core]
-    CA --> LA[(SQLite local)]
+  subgraph Téléphone
+    UA[Interface Flutter] --> RA[notes_core]
+    RA --> LA[(SQLite)]
+    RA --> NA[Nœud réseau]
   end
-  subgraph Windows
-    UW[Interface Flutter] --> CW[notes_core]
-    CW --> LW[(SQLite local)]
+  subgraph PC
+    UW[Interface Flutter] --> RW[notes_core]
+    RW --> LW[(SQLite)]
+    RW --> NW[Nœud réseau]
   end
-  CA <-- HTTPS : sync_push / lecture différentielle --> API
-  CW <-- HTTPS --> API
-  subgraph Supabase
-    API[API REST + RPC] --> PG[(PostgreSQL + RLS)]
-    AUTH[Auth : comptes, sessions] --> PG
-    ST[Storage : pièces jointes] 
-    RT[Realtime] -. notification de changement .-> CA
-    RT -.-> CW
-  end
-  CA <-- fichiers --> ST
-  CW <-- fichiers --> ST
+  NA <-. annonces UDP 45892 .-> NW
+  NA <== TCP 45893 chiffré ==> NW
 ```
 
-## 3. Organisation du code
-
 ```
-packages/notes_core/          logique métier partagée (pur Dart, sans Flutter)
-  lib/src/models.dart         Note, Block, Folder, Tag, Attachment
-  lib/src/local_store.dart    base SQLite locale, file d'attente persistante, recherche FTS5
-  lib/src/merge.dart          fusion à trois voies (champs, blocs, étiquettes)
-  lib/src/sync_engine.dart    moteur de synchronisation
-  lib/src/repository.dart     opérations métier (créer, corbeille, dossiers, conflits…)
-  lib/src/remote.dart         contrat d'accès au serveur
-  lib/src/supabase_remote.dart  implémentation Supabase + comptes
-  lib/src/fake_remote.dart    serveur simulé pour les tests
-  lib/src/inline.dart         mise en forme en ligne (**gras**, ++souligné++…)
-  lib/src/export.dart         export TXT / Markdown / HTML
-app/                          application Flutter (Android + Windows)
-  lib/theme.dart              identité graphique (palette, points, logo)
-  lib/state/app_controller.dart  état de l'application, session, navigation
-  lib/editor/                 éditeur par blocs
-  lib/screens/                connexion, écran principal, paramètres
-  lib/widgets/                navigation, liste, dialogues
-  lib/services/               export PDF, stockage sécurisé, mises à jour
-supabase/migrations/          schéma, sécurité, fonctions SQL
-supabase/tests/               tests SQL (sécurité, conflits, idempotence)
-installer/                    installateur Windows (Inno Setup)
-tools/                        génération des projets natifs
-.github/workflows/            tests, compilation, publication, maintien, sauvegarde
+packages/notes_core/            logique partagée, pur Dart (aussi exécutée par les tests)
+  lib/src/models.dart           Note, Block, Folder, Tag, Attachment
+  lib/src/local_store.dart      base SQLite : éléments, révisions, journal, appareils, historique
+  lib/src/merge.dart            fusion à trois voies (champs, blocs, étiquettes)
+  lib/src/repository.dart       opérations métier (notes, dossiers, étiquettes, corbeille, conflits)
+  lib/src/lan/speke.dart        échange de clés authentifié par le code ou la clé d'association
+  lib/src/lan/channel.dart      trames, canal chiffré, requêtes/réponses
+  lib/src/lan/discovery.dart    annonces UDP sur le réseau local
+  lib/src/lan/sync_driver.dart  algorithme de synchronisation entre deux appareils
+  lib/src/lan/lan_node.dart     écoute, connexions, association, reconnexion automatique
+app/                            application Flutter (thème, éditeur, écrans)
+installer/                      installateur Windows (Inno Setup) avec désinstalleur
 ```
 
-## 4. Synchronisation
+## 3. Découverte et connexion
+
+* Chaque appareil écoute en TCP sur le port **45893** et diffuse toutes les
+  5 secondes une annonce UDP (port **45892**) contenant son identifiant, son
+  nom et son port. Un appareil qui reçoit une annonce répond directement à
+  l'émetteur : cela fonctionne même quand les diffusions entrantes sont
+  filtrées (fréquent sur Android).
+* Les adresses des appareils associés sont mémorisées : au démarrage,
+  l'application les rappelle directement.
+* En dernier recours, l'application cherche l'autre appareil sur le
+  sous-réseau (connexion de test sur le port 45893).
+* Une fois connectés, les deux appareils gardent la connexion ouverte : une
+  modification part en moins d'une seconde. Une connexion silencieuse est
+  vérifiée puis rétablie automatiquement.
+
+L'annonce ne contient aucun secret et ne donne aucun accès.
+
+## 4. Association et sécurité
+
+1. L'appareil A affiche un code aléatoire à 6 chiffres, valable 5 minutes.
+2. L'appareil B le saisit. Les deux réalisent un **échange de clés SPEKE**
+   (groupe MODP 2048 bits de la RFC 3526, générateur dérivé du code) : seuls
+   deux appareils connaissant le même code obtiennent la même clé, et chacun
+   prouve à l'autre qu'il la possède avant tout échange de données.
+3. Un tiers qui écoute le réseau ne peut ni en déduire le code ni tester des
+   codes hors ligne. En se faisant passer pour un appareil, il ne peut tester
+   **qu'un code par tentative** ; le code est **annulé à la 3e tentative**.
+4. Les deux appareils en tirent une **clé d'association de 256 bits**, rangée
+   dans le coffre du système (Android Keystore, protection des données
+   Windows). Les connexions suivantes refont le même échange avec cette clé,
+   avec de nouvelles clés de session à chaque fois.
+5. Tous les messages passent ensuite par **ChaCha20-Poly1305** (une clé par
+   sens, compteur de messages) : un message modifié, rejoué ou forgé est
+   refusé et la connexion est coupée.
+
+Un appareil non associé, ou retiré de la liste, ne peut ni lire ni écrire.
+
+## 5. Synchronisation
 
 ### Écriture locale d'abord
 
-Chaque action de l'utilisateur est **immédiatement** écrite dans SQLite
-(`PRAGMA synchronous = FULL`), puis ajoutée à la **file d'attente persistante**
-(`outbox`). Rien n'attend le réseau : l'application est entièrement utilisable
-hors ligne et une coupure ne fait rien perdre.
+Chaque action est **immédiatement** écrite dans SQLite (`synchronous = FULL`).
+Chaque élément (note, dossier, étiquette, pièce jointe) porte :
 
-Chaque élément local conserve :
+* une **révision** propre à l'appareil, augmentée à chaque changement ;
+* une position dans le **journal des changements** de l'appareil.
 
-* `data` — l'état affiché ;
-* `base` — la dernière version confirmée par le serveur (ancêtre commun) ;
-* `conflict` — une version serveur concurrente non résolue ;
-* `dirty`, `local_rev` — modifications locales en attente.
+Pour chaque appareil associé, la base retient le dernier contenu commun
+(ancêtre pour la fusion) et la révision de l'élément chez l'autre. Ce qui
+reste à transmettre se déduit de ces informations : pas de file séparée qui
+pourrait se désynchroniser, et rien n'est perdu après un redémarrage ou une
+coupure.
 
-### Envoi
+### Échange entre deux appareils
 
-Pour chaque opération de la file, le moteur appelle `sync_push(entité, ligne,
-version_de_base, op_id)` :
+Entre deux appareils, celui dont l'identifiant est le plus petit **pilote**
+l'échange, l'autre répond. Un tour d'échange :
 
-* **version de base = version serveur** → le serveur applique, incrémente la
-  version et répond `ok` ;
-* **version différente** → le serveur n'écrit rien et répond `conflict` avec sa
-  version : le client fusionne (voir plus bas) ;
-* **op_id déjà vu** (réponse perdue puis renvoi) → `duplicate` : rien n'est
-  appliqué deux fois.
+1. le pilote demande ce qui a changé chez l'autre depuis sa dernière position
+   dans le journal (par pages de 200, position mémorisée après chaque page :
+   une coupure reprend là où elle s'était arrêtée) ;
+2. il intègre chaque élément reçu : adopté si rien n'a changé localement,
+   fusionné sinon ;
+3. il envoie ses propres modifications. Chaque écriture chez l'autre est
+   **conditionnelle** : acceptée seulement si l'élément n'a pas changé
+   là-bas depuis le dernier échange ; sinon l'autre renvoie sa version et le
+   pilote fusionne. Rien n'est jamais écrasé sans comparaison ;
+4. les pièces jointes manquantes sont transférées dans les deux sens (par
+   morceaux de 256 Ko, empreinte SHA-256 vérifiée à l'arrivée).
 
-Un identifiant d'opération est régénéré à chaque modification locale ; un même
-identifiant correspond donc toujours au même contenu.
+Un tour est relancé 0,4 s après une modification (locale ou signalée par
+l'autre appareil) et vérifié toutes les 5 s.
 
-Les pièces jointes sont envoyées dans le stockage **avant** leur fiche, dans un
-dossier `<id utilisateur>/<id pièce jointe>/<nom>`.
-
-### Réception différentielle
-
-Chaque écriture reçoit un numéro de séquence serveur croissant (`server_seq`).
-Un appareil ne demande que les lignes dont `server_seq` dépasse son curseur, par
-pages de 500, et **enregistre le curseur après chaque page** : une coupure en
-cours de réception reprend là où elle s'était arrêtée. Les écritures d'un même
-compte sont sérialisées (verrou consultatif PostgreSQL) pour que l'ordre des
-séquences corresponde à l'ordre de validation : aucune ligne ne peut être
-sautée.
-
-Les suppressions sont des **pierres tombales** (`trashed_at`, `deleted`,
-`purged`) : elles se propagent comme des modifications.
-
-### Déclenchement automatique
-
-* 0,8 s après une modification locale ;
-* instantanément sur notification **temps réel** du serveur (un autre appareil
-  a écrit) ;
-* toutes les 60 s ;
-* après un échec réseau, avec un délai croissant (5 s, 10 s, 20 s… 5 min).
-
-### Résolution des conflits
+### Conflits
 
 La décision ne repose **jamais sur l'heure de modification** : seules les
 différences par rapport à l'ancêtre commun comptent (fusion à trois voies).
 
 | Situation | Résultat |
 |---|---|
-| Champs différents modifiés de chaque côté (ex. titre ici, contenu là-bas) | Fusion automatique |
-| Blocs différents d'une même note modifiés | Fusion automatique, bloc par bloc (ordre conservé) |
-| Étiquettes ajoutées/retirées des deux côtés | Union des ajouts, application des retraits |
-| Même bloc ou même titre modifié différemment | **Conflit présenté à l'utilisateur** |
-| Bloc modifié d'un côté, supprimé de l'autre | **Conflit présenté à l'utilisateur** |
-| Note modifiée d'un côté, supprimée définitivement de l'autre | **Conflit présenté à l'utilisateur** |
-| Note modifiée d'un côté, mise à la corbeille de l'autre | Modifications conservées, note dans la corbeille (récupérable) |
-| Favori / dossier / archivage modifiés des deux côtés | Le choix de l'appareil qui synchronise en dernier est retenu (sans perte de contenu) |
+| Champs différents modifiés de chaque côté | fusion automatique |
+| Blocs différents d'une même note | fusion automatique, bloc par bloc, ordre conservé |
+| Étiquettes ajoutées / retirées des deux côtés | ajouts et retraits combinés |
+| Même bloc ou même titre modifié différemment | **choix proposé à l'utilisateur** |
+| Bloc modifié d'un côté, supprimé de l'autre | **choix proposé** |
+| Note modifiée d'un côté, supprimée définitivement de l'autre | **choix proposé** |
+| Note modifiée d'un côté, mise à la corbeille de l'autre | texte conservé, note dans la corbeille |
+| Favori, dossier, archivage modifiés des deux côtés | le choix de l'appareil pilote est retenu (aucun contenu perdu) |
 
-En cas de conflit, la version locale reste intacte, la version serveur est mise
-de côté et rien n'est envoyé tant que l'utilisateur n'a pas choisi : **garder
-la mienne**, **garder l'autre** ou **garder les deux** (la version locale devient
-une nouvelle note). La version écartée reste consultable dans l'historique.
+En cas de conflit, la version locale reste intacte, l'autre est mise de côté
+et la note n'est plus transmise tant que l'utilisateur n'a pas choisi :
+*garder la mienne*, *garder l'autre* ou *garder les deux*. Le choix est
+proposé sur l'appareil qui pilote l'échange.
 
 ### Historique
 
-Un déclencheur PostgreSQL archive l'ancienne version d'une note à chaque
-modification de son titre ou de son contenu (50 dernières versions par note).
-L'éditeur permet de les consulter et d'en restaurer une.
+Avant chaque modification du titre ou du contenu, l'ancienne version est
+conservée : au plus un instantané toutes les 2 minutes pendant la frappe, et
+toujours avant une modification venue d'un autre appareil ou une résolution
+de conflit (50 versions par note). L'éditeur permet de les consulter et d'en
+restaurer une.
 
-## 5. Sécurité
+### Suppressions
 
-* Communications **HTTPS** uniquement.
-* **Row Level Security** : chaque table n'est lisible que pour `user_id = auth.uid()`.
-* **Aucune écriture directe** : les clients n'ont que le droit de lecture ; toute
-  écriture passe par `sync_push`, qui impose l'identifiant du propriétaire et
-  refuse de modifier la ligne d'un autre compte.
-* Stockage des fichiers privé, limité au dossier de l'utilisateur.
-* Les applications ne contiennent que la clé **publique** (anon). Aucune clé
-  d'administration n'est livrée.
-* Jetons de session chiffrés sur l'appareil : clé de 256 bits dans le coffre du
-  système (Android Keystore, protection des données Windows) via
-  `flutter_secure_storage`, session chiffrée et authentifiée dans un fichier.
-* Suppression du compte : fichiers puis toutes les données (cascade SQL).
-* « Déconnecter tous les appareils » révoque toutes les sessions du compte :
-  l'appareil courant est déconnecté immédiatement, les autres au prochain
-  renouvellement de leur jeton d'accès (au plus tard une heure après, durée de
-  vie par défaut d'un jeton Supabase).
-
-**Chiffrement de bout en bout : non proposé.** Les notes sont protégées en
-transit (HTTPS) et par l'isolation des comptes, mais le serveur peut techniquement
-les lire. Un vrai chiffrement de bout en bout imposerait une gestion de clés et
-une récupération en cas d'oubli du mot de passe qui n'existent pas ici ; il
-n'est donc pas annoncé.
+Les suppressions sont des « pierres tombales » (`trashed_at`, `deleted`,
+`purged`) qui se propagent comme des modifications. Une suppression
+définitive vide le contenu et l'historique de la note.
 
 ## 6. Format des données
 
-Voir [API.md](API.md).
+Le contenu d'une note est une liste de blocs JSON identifiés :
+
+```json
+{ "blocks": [
+  { "id": "b1", "type": "h1",    "text": "Révisions" },
+  { "id": "b2", "type": "todo",  "text": "Exercices **Grafcet**", "checked": true },
+  { "id": "b3", "type": "image", "attachment_id": "…" },
+  { "id": "b4", "type": "table", "rows": [["Repère", "Désignation"], ["KM1", "Contacteur"]] }
+]}
+```
+
+Types : `p`, `h1`, `h2`, `quote`, `bullet`, `numbered`, `todo`, `code`,
+`divider`, `image`, `file`, `table`. Mise en forme en ligne : `**gras**`,
+`*italique*`, `++souligné++`, `~~barré~~`, `` `code` ``, `[texte](lien)`.
+Les champs inconnus sont conservés (compatibilité entre versions).

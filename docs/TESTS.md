@@ -1,109 +1,84 @@
 # Tests
 
-Tous les tests sont exécutés automatiquement par GitHub Actions à chaque
-modification (onglet **Actions**). Aucun résultat n'est déclaré sans exécution.
+Tous les tests tournent automatiquement dans GitHub Actions à chaque
+modification (onglet **Actions**). Aucun résultat n'est annoncé sans avoir été
+exécuté.
 
-## 1. Scénarios du cahier des charges — contre un vrai serveur Supabase
+## 1. Synchronisation entre appareils — 22 / 22
 
-Job **« Bout en bout (vrai backend Supabase) »** du workflow *Tests* : une
-instance Supabase complète (PostgreSQL, Auth, Storage, Realtime) est démarrée
-avec `supabase start`, la migration est appliquée, puis le code de
-synchronisation **embarqué dans les applications** est exécuté par plusieurs
-« appareils » indépendants (chacun avec sa base SQLite sur disque, sa propre
-session et son propre moteur de synchronisation).
+Fichier [`packages/notes_core/test/lan_test.dart`](../packages/notes_core/test/lan_test.dart).
+Chaque « appareil » a sa propre base SQLite sur disque, son propre dossier de
+fichiers, ses propres clés et un vrai nœud réseau. Les appareils se
+connectent par de **vraies connexions TCP chiffrées** (et par de vraies
+annonces UDP pour la découverte) sur la boucle locale. C'est exactement le code
+embarqué dans les applications.
 
-| # | Scénario | Ce qui est vérifié |
+| # | Scénario du cahier des charges | Ce qui est vérifié |
 |---|---|---|
-| 1 | Création | Note créée sur « Android » → présente sur « Windows » avec son contenu et ses cases cochées |
-| 2 | Modification | Titre, contenu et favori modifiés sur « Windows » → à jour sur « Android », version 2 |
-| 3 | Hors ligne | Note + dossier créés sans réseau, application **redémarrée** hors ligne (file d'attente conservée), puis synchronisés au retour du réseau |
-| 4a | Modifications simultanées (blocs différents) | Les deux appareils hors ligne modifient des blocs différents → fusion automatique, rien n'est perdu, identique des deux côtés |
-| 4b | Modifications simultanées (même paragraphe) | Conflit détecté, version locale intacte, serveur non écrasé ; « garder les deux » → deux notes identiques sur les deux appareils |
-| 4c | « Garder ma version » | La version de l'autre appareil reste dans l'historique du serveur |
-| 4d | Modification vs corbeille | Le texte ajouté est conservé, la note reste récupérable dans la corbeille |
-| 5 | Suppression | Corbeille propagée, restauration propagée, suppression définitive propagée (et retirée de la recherche) |
-| 6 | Pièces jointes | Image ajoutée sur « Android » → téléchargée automatiquement sur « Windows », contenu identique (SHA-256) ; suppression propagée et fichier distant supprimé |
-| 7 | Redémarrage | Les deux applications redémarrent : notes, étiquettes conservées ; reprise au curseur sans retéléchargement |
-| 8 | Plusieurs appareils | 3 appareils, 12 notes, modifications croisées → états identiques, aucune opération en attente ni conflit |
-| 9 | Sécurité | Un autre compte ne reçoit rien, ne peut ni lire ni écraser la note (même en réutilisant son identifiant), ni lire ou écraser ses fichiers |
-| — | Réponse perdue | L'opération renvoyée n'est pas appliquée deux fois |
-| — | Réponse perdue puis nouvelle modification | Aucune perte, aucun faux conflit |
-| — | Pagination / reprise | Coupure pendant la réception : la page reçue est conservée, la suite reprend au curseur |
-| — | Dossiers, sous-dossiers, étiquettes | Synchronisés ; suppression d'un dossier → notes conservées à la racine |
-| — | Saisie pendant une synchronisation | Rien n'est perdu |
-| — | Écriture directe dans les tables | Refusée (tout passe par `sync_push`) |
-| — | Accès anonyme | Refusé |
-| — | Temps réel | L'autre appareil est notifié en quelques secondes |
-| — | Déconnexion de tous les appareils | Les sessions des autres appareils ne peuvent plus être renouvelées ; la reconnexion par mot de passe reste possible |
-| — | Suppression du compte | Données et fichiers effacés, autre session sans accès, reconnexion impossible |
+| — | Association | code correct → les deux appareils se reconnaissent et partagent la même clé ; appareil trouvé automatiquement par les annonces UDP ; code faux refusé et **code annulé à la 3e tentative** ; code expiré refusé ; format invalide refusé |
+| 1 | Création | note créée sur « Android » → présente sur « Windows » avec ses cases cochées |
+| 2 | Modification | titre, contenu et favori modifiés sur « Windows » → à jour sur « Android » |
+| 3 | Hors ligne | note + dossier créés sans réseau, application **redémarrée** sans réseau (rien n'est perdu, rien n'est parti), puis envoyés automatiquement au retour du réseau |
+| 4 | Modifications simultanées | blocs différents → fusion automatique ; même paragraphe → conflit détecté, aucune version écrasée, « garder les deux » ; « garder ma version » → l'autre reste dans l'historique ; modification contre mise à la corbeille → texte conservé |
+| 5 | Suppression | corbeille, restauration et suppression définitive propagées (et retirées de la recherche) |
+| 6 | Pièces jointes | image de 700 Ko (plusieurs morceaux) transférée et **identique au SHA-256 près** ; fichier dans l'autre sens ; suppression propagée |
+| 7 | Redémarrage | les deux applications redémarrent : notes, étiquettes et association conservées, reconnexion automatique, synchronisation qui continue |
+| 8 | Plusieurs appareils | téléphone ↔ PC ↔ tablette : 12 notes, modifications croisées → mêmes données partout, sans conflit |
+| 9 | Sécurité | un appareil non associé est refusé, même en **usurpant l'identifiant** d'un appareil associé ; un appareil retiré ne peut plus se synchroniser |
+| — | Robustesse | 450 notes reçues par pages ; dossiers, sous-dossiers et étiquettes ; saisie continue pendant la synchronisation ; état « hors de portée » puis retour |
 
-**Résultat : 22 / 22 réussis.**
+## 2. Cryptographie et canal — 13 / 13
 
-Les mêmes scénarios tournent aussi contre un serveur simulé en mémoire
-(job *Noyau de synchronisation*), avec les tests unitaires de fusion, de
-recherche, d'export et de mise en forme : **45 / 45 réussis**.
+[`crypto_test.dart`](../packages/notes_core/test/crypto_test.dart) :
 
-## 2. Backend SQL
+* le groupe de la RFC 3526 est bien un **nombre premier sûr** (p et (p−1)/2
+  premiers, test de Miller-Rabin) ;
+* même code → même clé des deux côtés ; code différent → clés différentes ;
+  nouvelles clés à chaque session ; valeurs publiques piégées refusées ;
+* trames reconstituées quel que soit le découpage TCP ; trame trop grande refusée ;
+* messages chiffrés dans l'ordre ; **mauvaise clé, message modifié ou rejoué
+  refusés** (connexion coupée) ;
+* requêtes, réponses, erreurs et transferts binaires de 300 Ko.
 
-Job **« Backend SQL (PostgreSQL) »** : migration appliquée deux fois
-(ré-exécutable), puis 29 vérifications — création, version, idempotence,
-détection de conflit sans écrasement, historique, écriture directe refusée,
-isolation des comptes (lecture, écriture, historique, fichiers), accès anonyme
-refusé, pierre tombale, suppression du compte en cascade.
-**Résultat : 29 / 29 réussis.**
+## 3. Logique des notes — 28 / 28
 
-## 3. Applications
+Fusion à trois voies (16 tests : blocs, ordre, étiquettes, suppression,
+décision **indépendante de l'heure de modification**), base locale, recherche
+sans accents et par préfixe, corbeille de 30 jours, mise en forme, exports
+Markdown / TXT / HTML.
 
-Workflow **Build Android + Windows** :
+**Total du noyau : 63 / 63.**
+
+## 4. Applications
 
 | Vérification | Résultat |
 |---|---|
-| Analyse statique de l'application | aucune erreur ni avertissement (15 remarques d'information sur des API signalées comme dépréciées par la dernière version de Flutter) |
-| Interface bureau (1440×900) : trois colonnes, saisie, `[] ` → cases à cocher, Entrée → bloc suivant, gras, enregistrement local, file de synchronisation, nouvelle note | réussi |
+| Analyse statique | aucune erreur ni avertissement (remarques d'information : API de Flutter signalées comme dépréciées par la dernière version) |
+| Interface bureau (1440×900) : trois colonnes, saisie, `[] ` → cases à cocher, Entrée → bloc suivant, gras, enregistrement local, nouvelle note | réussi |
 | Interface téléphone (400×860) : liste, ouverture d'une note, retour, recherche instantanée | réussi |
 | Compilation de l'APK Android | réussie |
 | Compilation Windows (exécutable natif) | réussie |
 | L'exécutable Windows démarre et reste ouvert 12 s sans erreur | réussi |
-| Installation silencieuse (sans droits administrateur), présence de l'exécutable, désinstallation, exécutable supprimé | réussi |
-| Captures d'écran de l'interface (polices réelles), publiées sur la branche `captures` | générées |
+| Installation silencieuse sans droits administrateur, puis désinstallation | réussi |
+| Captures d'écran réelles (polices et icônes chargées), publiées sur la branche `captures` | générées |
 
-## 4. Ce qui reste à vérifier à la main
+## 5. Ce qui n'est pas testé automatiquement
 
-Les tests automatisés couvrent le code exact des applications et un vrai
-serveur Supabase (la même pile logicielle que l'offre en ligne, démarrée
-localement), mais pas :
+* **Un vrai téléphone et un vrai PC sur un vrai réseau.** Les tests passent par
+  la boucle locale d'une seule machine. Ils ne couvrent ni le Wi-Fi de votre
+  box, ni l'isolement des appareils que certaines box ou réseaux invités
+  imposent, ni le pare-feu Windows, ni l'économie d'énergie d'Android.
+* La recherche de l'autre appareil par balayage du sous-réseau (désactivée
+  dans les tests).
+* Le sélecteur de fichiers du système et l'export PDF.
 
-* **un téléphone physique ni l'écran d'un PC réel** — l'APK est compilé mais
-  n'a pas été lancé sur un appareil Android ; l'exécutable Windows est lancé
-  et installé en CI, sans interaction à l'écran ;
-* **votre projet Supabase en ligne** — il n'existe qu'une fois créé par vous ;
-* **les e-mails** (confirmation d'inscription, code de réinitialisation du mot
-  de passe) — ils dépendent des modèles d'e-mail de votre projet
-  (voir [INSTALLATION.md](INSTALLATION.md)) ;
-* l'ajout d'une image depuis la galerie du téléphone et l'export PDF (le
-  transfert et l'intégrité des fichiers sont testés, pas le sélecteur de
-  fichiers du système).
-
-Après installation, refaites les scénarios 1, 2 et 3 sur votre téléphone et
-votre PC (environ 5 minutes) : écrire une note sur le téléphone, la voir sur le
-PC, la modifier, puis recommencer en mode avion. Testez aussi une fois « mot de
-passe oublié ».
+À faire une fois après installation (5 minutes) : associer le téléphone et le
+PC, écrire une note sur le téléphone et la voir sur le PC, la modifier sur le
+PC, puis recommencer avec le téléphone en mode avion.
 
 ## Lancer les tests soi-même
 
 ```bash
-# Noyau (Dart) — serveur simulé
-cd packages/notes_core && dart pub get && dart test
-
-# Contre un Supabase local (Docker requis)
-supabase start
-eval "$(supabase status -o env)"
-SUPABASE_URL=$API_URL SUPABASE_ANON_KEY=$ANON_KEY dart test test/sync_supabase_test.dart --concurrency=1
-
-# Backend SQL (PostgreSQL local)
-psql -v ON_ERROR_STOP=1 -f supabase/tests/stub_supabase.sql \
-     -f supabase/migrations/20261114000000_nothing_notes.sql -f supabase/tests/backend_test.sql
-
-# Application
+cd packages/notes_core && dart pub get && dart test --concurrency=1
 cd app && flutter test
 ```
