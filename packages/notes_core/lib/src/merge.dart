@@ -1,6 +1,6 @@
 import 'models.dart';
 
-/// Résultat d'une fusion à trois voies (ancêtre commun / local / serveur).
+/// Résultat d'une fusion à trois voies (ancêtre commun / local / autre appareil).
 class MergeOutcome {
   MergeOutcome(this.merged, {this.hardConflicts = const [], this.softConflicts = const []});
 
@@ -54,7 +54,7 @@ const _softFields = <EntityType, List<String>>{
   EntityType.notes: ['folder_id', 'favorite', 'archived', 'trashed_at'],
   EntityType.folders: ['name', 'parent_id', 'color', 'position', 'deleted'],
   EntityType.tags: ['name', 'color', 'deleted'],
-  EntityType.attachments: ['note_id', 'file_name', 'mime', 'size_bytes', 'sha256', 'storage_path', 'deleted'],
+  EntityType.attachments: ['note_id', 'file_name', 'mime', 'size_bytes', 'sha256', 'deleted'],
 };
 
 /// Fusionne une ligne modifiée localement ([local]) avec la version serveur

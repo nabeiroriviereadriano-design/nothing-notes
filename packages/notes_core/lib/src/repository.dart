@@ -7,45 +7,46 @@ import 'package:path/path.dart' as p;
 import 'local_store.dart';
 import 'merge.dart';
 import 'models.dart';
-import 'sync_engine.dart';
 
-enum ConflictChoice { keepMine, keepServer, keepBoth }
+enum ConflictChoice { keepMine, keepOther, keepBoth }
 
 class NoteVersion {
-  NoteVersion({required this.title, required this.blocks, required this.savedAt, this.reason = 'edit', this.version = 0});
+  NoteVersion({required this.title, required this.blocks, required this.savedAt, this.reason = 'edit'});
   final String title;
   final List<Block> blocks;
   final DateTime savedAt;
+
+  /// 'edit' (modification ici), 'sync' / 'merge' (reçue d'un autre appareil),
+  /// 'conflict' (version écartée lors d'un conflit), 'restore'.
   final String reason;
-  final int version;
 }
 
 /// Règles métier communes à Android et Windows : tout ce que l'interface
 /// peut faire sur les notes passe par cette classe.
 class NotesRepository {
-  NotesRepository({required this.store, required this.userId, required this.filesDir, this.engine});
+  NotesRepository({required this.store, required this.filesDir});
 
   final LocalStore store;
-  final String userId;
   final String filesDir;
-  SyncEngine? engine;
 
   String get deviceId => store.deviceId;
   Stream<EntityType> get changes => store.changes;
 
-  void _saved() => engine?.notifyLocalChange();
-
   // ---------------------------------------------------------------- notes
-  Note _toNote(LocalRecord r) => Note.fromRow(r.data, dirty: r.dirty, conflict: r.conflict);
-
   /// Toutes les notes non supprimées définitivement (corbeille comprise).
-  List<Note> allNotes() =>
-      store.all(EntityType.notes).map(_toNote).where((n) => !n.purged).toList();
+  List<Note> allNotes() {
+    final unsynced = store.unsyncedIds(EntityType.notes);
+    return store
+        .all(EntityType.notes)
+        .map((r) => Note.fromRow(r.data, dirty: unsynced.contains(r.id), conflict: r.conflictRow))
+        .where((n) => !n.purged)
+        .toList();
+  }
 
   Note? note(String id) {
     final r = store.get(EntityType.notes, id);
     if (r == null) return null;
-    final n = _toNote(r);
+    final n = Note.fromRow(r.data, dirty: store.isUnsynced(EntityType.notes, id), conflict: r.conflictRow);
     return n.purged ? null : n;
   }
 
@@ -59,20 +60,15 @@ class NotesRepository {
       deviceId: deviceId,
     );
     store.saveLocal(EntityType.notes, n.toRow());
-    _saved();
     return n;
   }
 
-  /// Enregistre la note localement (immédiat) et la met en file d'envoi.
-  /// Retourne `false` si rien n'a changé.
-  bool saveNote(Note n, {bool touch = true}) {
+  /// Enregistre la note sur cet appareil (immédiat) ; elle sera transmise
+  /// aux appareils associés. Retourne `false` si rien n'a changé.
+  bool saveNote(Note n, {bool touch = true, String reason = 'edit'}) {
     final cur = store.get(EntityType.notes, n.id);
     final row = n.toRow();
     if (cur != null) {
-      row['version'] = cur.data['version'];
-      for (final k in const ['user_id', 'server_seq', 'server_updated_at']) {
-        if (cur.data.containsKey(k)) row[k] = cur.data[k];
-      }
       const fields = ['title', 'content', 'folder_id', 'tags', 'favorite', 'archived', 'trashed_at', 'purged'];
       if (fields.every((f) => jsonEq(row[f], cur.data[f]))) return false;
     }
@@ -82,8 +78,7 @@ class NotesRepository {
     }
     n.deviceId = deviceId;
     row['device_id'] = deviceId;
-    store.saveLocal(EntityType.notes, row);
-    _saved();
+    store.saveLocal(EntityType.notes, row, reason: reason);
     return true;
   }
 
@@ -101,11 +96,14 @@ class NotesRepository {
   void trashNote(String id) => _update(id, (n) => n.trashedAt = DateTime.now().toUtc());
   void restoreNote(String id) => _update(id, (n) => n.trashedAt = null);
 
+  List<Block> _copyBlocks(List<Block> blocks) =>
+      blocks.map((b) => Block.fromJson({...jsonClone(b.toJson()), 'id': newId()})).toList();
+
   Note duplicateNote(String id, {String suffix = ' (copie)'}) {
     final src = note(id)!;
     return createNote(
       title: '${src.title}$suffix',
-      blocks: src.blocks.map((b) => Block.fromJson({...jsonClone(b.toJson()), 'id': newId()})).toList(),
+      blocks: _copyBlocks(src.blocks),
       folderId: src.folderId,
       tags: [...src.tags],
     );
@@ -170,29 +168,6 @@ class NotesRepository {
     _saveRow(EntityType.folders, f.toRow());
   }
 
-  /// Supprime le dossier et ses sous-dossiers ; leurs notes reviennent à la racine.
-  void deleteFolder(String id) {
-    store.transaction(() {
-      final all = folders();
-      final toDelete = <String>{id};
-      var grew = true;
-      while (grew) {
-        grew = false;
-        for (final f in all) {
-          if (f.parentId != null && toDelete.contains(f.parentId) && toDelete.add(f.id)) grew = true;
-        }
-      }
-      for (final f in all.where((f) => toDelete.contains(f.id))) {
-        f.deleted = true;
-        updateFolder(f);
-      }
-      for (final n in allNotes().where((n) => toDelete.contains(n.folderId))) {
-        n.folderId = null;
-        saveNote(n, touch: false);
-      }
-    });
-  }
-
   /// Identifiants du dossier et de tous ses descendants.
   Set<String> folderSubtree(String id) {
     final all = folders();
@@ -205,6 +180,21 @@ class NotesRepository {
       }
     }
     return ids;
+  }
+
+  /// Supprime le dossier et ses sous-dossiers ; leurs notes reviennent à la racine.
+  void deleteFolder(String id) {
+    store.transaction(() {
+      final toDelete = folderSubtree(id);
+      for (final f in folders().where((f) => toDelete.contains(f.id))) {
+        f.deleted = true;
+        updateFolder(f);
+      }
+      for (final n in allNotes().where((n) => toDelete.contains(n.folderId))) {
+        n.folderId = null;
+        saveNote(n, touch: false);
+      }
+    });
   }
 
   // ---------------------------------------------------------------- étiquettes
@@ -238,16 +228,8 @@ class NotesRepository {
   }
 
   void _saveRow(EntityType type, Map<String, dynamic> row) {
-    final cur = store.get(type, row['id'].toString());
-    if (cur != null) {
-      row['version'] = cur.data['version'];
-      for (final k in const ['user_id', 'server_seq', 'server_updated_at']) {
-        if (cur.data.containsKey(k)) row[k] = cur.data[k];
-      }
-    }
     row['device_id'] = deviceId;
     store.saveLocal(type, row);
-    _saved();
   }
 
   // ---------------------------------------------------------------- pièces jointes
@@ -264,12 +246,11 @@ class NotesRepository {
   }
 
   /// Ajoute un fichier ou une image à une note. Le fichier est copié dans
-  /// le stockage de l'application, puis envoyé au serveur par le moteur.
+  /// le stockage de l'application ; il sera transmis aux appareils associés.
   Attachment addAttachment(String noteId, {required String fileName, required Uint8List bytes, String? mime}) {
     final id = newId();
-    final safe = safeFileName(fileName);
     final dir = Directory(p.join(filesDir, id))..createSync(recursive: true);
-    final file = File(p.join(dir.path, safe))..writeAsBytesSync(bytes, flush: true);
+    final file = File(p.join(dir.path, safeFileName(fileName)))..writeAsBytesSync(bytes, flush: true);
     final a = Attachment(
       id: id,
       noteId: noteId,
@@ -277,10 +258,9 @@ class NotesRepository {
       mime: mime ?? guessMime(fileName),
       sizeBytes: bytes.length,
       sha256: crypto.sha256.convert(bytes).toString(),
-      storagePath: '$userId/$id/$safe',
     );
     store.transaction(() {
-      store.setLocalFile(id, file.path, uploaded: false);
+      store.setLocalFile(id, file.path);
       _saveRow(EntityType.attachments, a.toRow());
     });
     return a;
@@ -293,16 +273,15 @@ class NotesRepository {
       ..deleted = true
       ..updatedAt = DateTime.now().toUtc();
     _saveRow(EntityType.attachments, a.toRow());
+    removeLocalCopy(store, id);
   }
 
+  /// Chemin du fichier s'il est présent sur cet appareil.
   String? localPath(String attachmentId) {
-    final lf = store.localFile(attachmentId);
-    if (lf == null) return null;
-    return File(lf.path).existsSync() ? lf.path : null;
+    final path = store.localFile(attachmentId);
+    if (path == null) return null;
+    return File(path).existsSync() ? path : null;
   }
-
-  Future<String?> ensureFile(String attachmentId) async =>
-      localPath(attachmentId) ?? await engine?.ensureFile(attachmentId);
 
   // ---------------------------------------------------------------- recherche
   /// Recherche par titre, contenu, étiquette ou dossier.
@@ -328,7 +307,7 @@ class NotesRepository {
   }
 
   // ---------------------------------------------------------------- conflits
-  /// Résout un conflit de modification simultanée.
+  /// Résout un conflit de modification simultanée sur deux appareils.
   Future<void> resolveConflict(String noteId, ConflictChoice choice) async {
     final rec = store.get(EntityType.notes, noteId);
     if (rec == null || rec.conflict == null) return;
@@ -337,53 +316,35 @@ class NotesRepository {
       case ConflictChoice.keepMine:
         store.resolveKeepLocal(EntityType.notes, noteId);
         break;
-      case ConflictChoice.keepServer:
-        // La version locale abandonnée reste restaurable depuis l'historique.
-        var saved = false;
-        try {
-          await engine?.remote.saveNoteVersion(noteId, mine.title, contentFromBlocks(mine.blocks), deviceId);
-          saved = engine != null;
-        } catch (_) {}
-        store.resolveKeepServer(EntityType.notes, noteId);
-        if (!saved && !mine.purged) {
-          // Hors ligne : on garde une copie dans la corbeille plutôt que de perdre le texte.
-          final copy = createNote(
-            title: '${mine.title} (version écartée)',
-            blocks: mine.blocks.map((b) => Block.fromJson({...jsonClone(b.toJson()), 'id': newId()})).toList(),
-            folderId: mine.folderId,
-            tags: [...mine.tags],
-          );
-          trashNote(copy.id);
-        }
+      case ConflictChoice.keepOther:
+        // La version locale écartée reste restaurable depuis l'historique.
+        store.resolveKeepRemote(EntityType.notes, noteId);
         break;
       case ConflictChoice.keepBoth:
-        store.resolveKeepServer(EntityType.notes, noteId);
+        store.resolveKeepRemote(EntityType.notes, noteId);
         if (!mine.purged) {
           createNote(
             title: '${mine.title.isEmpty ? 'Sans titre' : mine.title} (ma version)',
-            blocks: mine.blocks.map((b) => Block.fromJson({...jsonClone(b.toJson()), 'id': newId()})).toList(),
+            blocks: _copyBlocks(mine.blocks),
             folderId: mine.folderId,
             tags: [...mine.tags],
           );
         }
         break;
     }
-    _saved();
   }
 
   // ---------------------------------------------------------------- historique
-  Future<List<NoteVersion>> history(String noteId) async {
-    final rows = await engine!.remote.noteHistory(noteId);
-    return rows
-        .map((r) => NoteVersion(
-              title: (r['title'] ?? '').toString(),
-              blocks: blocksFromContent(r['content']),
-              savedAt: parseDate(r['saved_at']) ?? DateTime.now().toUtc(),
-              reason: (r['reason'] ?? 'edit').toString(),
-              version: asInt(r['version']),
-            ))
-        .toList();
-  }
+  /// Versions précédentes de la note conservées sur cet appareil.
+  List<NoteVersion> history(String noteId) => store
+      .history(noteId)
+      .map((r) => NoteVersion(
+            title: (r['title'] ?? '').toString(),
+            blocks: blocksFromContent(r['content']),
+            savedAt: parseDate(r['saved_at']) ?? DateTime.now().toUtc(),
+            reason: (r['reason'] ?? 'edit').toString(),
+          ))
+      .toList();
 
   void restoreVersion(String noteId, NoteVersion v) {
     final n = note(noteId);
@@ -391,8 +352,21 @@ class NotesRepository {
     n
       ..title = v.title
       ..blocks = v.blocks.map((b) => b.copy()).toList();
-    saveNote(n);
+    saveNote(n, reason: 'restore');
   }
+}
+
+/// Supprime la copie locale d'une pièce jointe (fichier et référence).
+void removeLocalCopy(LocalStore store, String attachmentId) {
+  final path = store.localFile(attachmentId);
+  if (path == null) return;
+  try {
+    final f = File(path);
+    if (f.existsSync()) f.deleteSync();
+    final dir = f.parent;
+    if (dir.existsSync() && dir.listSync().isEmpty) dir.deleteSync();
+  } catch (_) {}
+  store.removeLocalFile(attachmentId);
 }
 
 const _accents = {

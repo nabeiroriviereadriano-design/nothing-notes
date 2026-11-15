@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, lan]
   pull_request:
   workflow_dispatch:
 
@@ -15,32 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  backend-sql:
-    name: Backend SQL (PostgreSQL)
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Migration + tests de sécurité et de synchronisation
-        env:
-          PGPASSWORD: postgres
-        run: |
-          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q \
-            -f supabase/tests/stub_supabase.sql \
-            -f supabase/migrations/20261114000000_nothing_notes.sql \
-            -f supabase/migrations/20261114000000_nothing_notes.sql \
-            -f supabase/tests/backend_test.sql 2>&1 | tee sql.log
-          grep -q "TOUS LES TESTS BACKEND SONT PASSÉS" sql.log
-
   core:
-    name: Noyau de synchronisation (Dart)
+    name: Noyau + synchro locale chiffrée (Dart, vraies connexions TCP)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -54,8 +30,8 @@ jobs:
       - run: dart pub get
       - name: Analyse statique
         run: dart analyze 2>&1 | tee analyze.log
-      - name: Tests unitaires et scénarios (serveur simulé)
-        run: dart test --reporter expanded --no-color 2>&1 | tee test.log
+      - name: Tests unitaires et scénarios entre appareils
+        run: dart test --concurrency=1 --reporter expanded --no-color 2>&1 | tee test.log
       - name: Résumé
         if: always()
         run: |
@@ -69,40 +45,3 @@ jobs:
           name: core-logs
           path: packages/notes_core/*.log
 
-  e2e-supabase:
-    name: Bout en bout (vrai backend Supabase)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: supabase/setup-cli@v1
-        with:
-          version: latest
-      - uses: dart-lang/setup-dart@v1
-        with:
-          sdk: stable
-      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
-      - name: Démarrer Supabase (PostgreSQL, Auth, Storage, Realtime) et appliquer la migration
-        run: supabase start -x studio,imgproxy,edge-runtime,logflare,vector,supavisor
-      - name: Scénarios 1 à 9 avec deux appareils et le vrai serveur
-        working-directory: packages/notes_core
-        run: |
-          eval "$(supabase status -o env --workdir ../..)"
-          export SUPABASE_URL="$API_URL"
-          export SUPABASE_ANON_KEY="${ANON_KEY:-$PUBLISHABLE_KEY}"
-          dart pub get
-          dart test test/sync_supabase_test.dart --concurrency=1 --reporter expanded --no-color 2>&1 | tee e2e.log
-      - name: Résumé
-        if: always()
-        run: |
-          {
-            echo '### Bout en bout Supabase'; echo '```'
-            (grep -E "\[E\]|Some tests failed|All tests passed" packages/notes_core/e2e.log 2>/dev/null || true) | tail -n 60
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-      - name: Journaux Supabase en cas d'échec
-        if: failure()
-        run: |
-          docker ps -a || true
-          for c in $(docker ps -a --format '{{.Names}}' | grep -E 'storage|auth|realtime|rest' || true); do
-            echo "=== $c"; docker logs --tail 60 "$c" 2>&1 || true
-          done

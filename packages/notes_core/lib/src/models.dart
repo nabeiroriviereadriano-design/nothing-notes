@@ -7,7 +7,7 @@ const _uuid = Uuid();
 /// Génère un identifiant unique (UUID v4).
 String newId() => _uuid.v4();
 
-/// Les quatre types d'éléments synchronisés. Le nom correspond à la table serveur.
+/// Les quatre types d'éléments synchronisés.
 enum EntityType { folders, tags, notes, attachments }
 
 EntityType entityFromName(String name) =>
@@ -168,7 +168,6 @@ class Note {
     DateTime? createdAt,
     DateTime? updatedAt,
     this.deviceId,
-    this.version = 0,
     this.dirty = false,
     this.conflictRow,
   })  : blocks = blocks ?? [],
@@ -188,12 +187,11 @@ class Note {
   DateTime createdAt;
   DateTime updatedAt;
   String? deviceId;
-  int version;
 
-  /// Modifications locales pas encore confirmées par le serveur.
+  /// Modifications pas encore transmises à un appareil associé.
   bool dirty;
 
-  /// Version serveur concurrente non résolue (conflit à arbitrer).
+  /// Version concurrente venue d'un autre appareil (conflit à arbitrer).
   Map<String, dynamic>? conflictRow;
 
   bool get hasConflict => conflictRow != null;
@@ -212,7 +210,6 @@ class Note {
         createdAt: parseDate(r['created_at']),
         updatedAt: parseDate(r['updated_at']),
         deviceId: r['device_id']?.toString(),
-        version: asInt(r['version']),
         dirty: dirty,
         conflictRow: conflict,
       );
@@ -230,7 +227,6 @@ class Note {
         'created_at': createdAt.toUtc().toIso8601String(),
         'updated_at': updatedAt.toUtc().toIso8601String(),
         'device_id': deviceId,
-        'version': version,
       };
 
   Note copy() => Note.fromRow(jsonClone(toRow()), dirty: dirty, conflict: conflictRow);
@@ -255,7 +251,6 @@ class Folder {
     this.deleted = false,
     DateTime? createdAt,
     DateTime? updatedAt,
-    this.version = 0,
   })  : createdAt = createdAt ?? DateTime.now().toUtc(),
         updatedAt = updatedAt ?? DateTime.now().toUtc();
 
@@ -267,7 +262,6 @@ class Folder {
   bool deleted;
   DateTime createdAt;
   DateTime updatedAt;
-  int version;
 
   factory Folder.fromRow(Map<String, dynamic> r) => Folder(
         id: r['id'].toString(),
@@ -278,7 +272,6 @@ class Folder {
         deleted: asBool(r['deleted']),
         createdAt: parseDate(r['created_at']),
         updatedAt: parseDate(r['updated_at']),
-        version: asInt(r['version']),
       );
 
   Map<String, dynamic> toRow() => {
@@ -290,7 +283,6 @@ class Folder {
         'deleted': deleted,
         'created_at': createdAt.toUtc().toIso8601String(),
         'updated_at': updatedAt.toUtc().toIso8601String(),
-        'version': version,
       };
 }
 
@@ -302,7 +294,6 @@ class Tag {
     this.deleted = false,
     DateTime? createdAt,
     DateTime? updatedAt,
-    this.version = 0,
   })  : createdAt = createdAt ?? DateTime.now().toUtc(),
         updatedAt = updatedAt ?? DateTime.now().toUtc();
 
@@ -312,7 +303,6 @@ class Tag {
   bool deleted;
   DateTime createdAt;
   DateTime updatedAt;
-  int version;
 
   factory Tag.fromRow(Map<String, dynamic> r) => Tag(
         id: r['id'].toString(),
@@ -321,7 +311,6 @@ class Tag {
         deleted: asBool(r['deleted']),
         createdAt: parseDate(r['created_at']),
         updatedAt: parseDate(r['updated_at']),
-        version: asInt(r['version']),
       );
 
   Map<String, dynamic> toRow() => {
@@ -331,7 +320,6 @@ class Tag {
         'deleted': deleted,
         'created_at': createdAt.toUtc().toIso8601String(),
         'updated_at': updatedAt.toUtc().toIso8601String(),
-        'version': version,
       };
 }
 
@@ -343,11 +331,9 @@ class Attachment {
     this.mime = 'application/octet-stream',
     this.sizeBytes = 0,
     this.sha256,
-    this.storagePath,
     this.deleted = false,
     DateTime? createdAt,
     DateTime? updatedAt,
-    this.version = 0,
   })  : createdAt = createdAt ?? DateTime.now().toUtc(),
         updatedAt = updatedAt ?? DateTime.now().toUtc();
 
@@ -357,11 +343,9 @@ class Attachment {
   String mime;
   int sizeBytes;
   String? sha256;
-  String? storagePath;
   bool deleted;
   DateTime createdAt;
   DateTime updatedAt;
-  int version;
 
   bool get isImage => mime.startsWith('image/');
 
@@ -372,11 +356,9 @@ class Attachment {
         mime: (r['mime'] ?? 'application/octet-stream').toString(),
         sizeBytes: asInt(r['size_bytes']),
         sha256: r['sha256']?.toString(),
-        storagePath: r['storage_path']?.toString(),
         deleted: asBool(r['deleted']),
         createdAt: parseDate(r['created_at']),
         updatedAt: parseDate(r['updated_at']),
-        version: asInt(r['version']),
       );
 
   Map<String, dynamic> toRow() => {
@@ -386,11 +368,9 @@ class Attachment {
         'mime': mime,
         'size_bytes': sizeBytes,
         'sha256': sha256,
-        'storage_path': storagePath,
         'deleted': deleted,
         'created_at': createdAt.toUtc().toIso8601String(),
         'updated_at': updatedAt.toUtc().toIso8601String(),
-        'version': version,
       };
 }
 
@@ -417,4 +397,12 @@ String guessMime(String fileName) {
     'mp4': 'video/mp4',
   };
   return map[ext] ?? 'application/octet-stream';
+}
+
+/// Nom de fichier sans caractères problématiques (Windows et Android).
+String safeFileName(String name) {
+  final cleaned = name.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_').replaceAll(RegExp(r'_+'), '_');
+  final trimmed = cleaned.replaceAll(RegExp(r'^[._]+'), '');
+  if (trimmed.isEmpty) return 'fichier';
+  return trimmed.length > 100 ? trimmed.substring(trimmed.length - 100) : trimmed;
 }

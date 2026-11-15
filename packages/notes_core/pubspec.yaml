@@ -1,6 +1,6 @@
 name: notes_core
-description: Logique métier partagée de Nothing Notes (modèles, base locale, fusion, synchronisation).
-version: 1.0.0
+description: Logique métier partagée de Nothing Notes (modèles, base locale, fusion, synchronisation locale chiffrée).
+version: 2.0.0
 publish_to: none
 
 environment:
@@ -8,9 +8,9 @@ environment:
 
 dependencies:
   crypto: ^3.0.3
+  cryptography: ^2.7.0
   path: ^1.9.0
   sqlite3: ^2.4.6
-  supabase: ^2.6.0
   uuid: ^4.4.2
 
 dev_dependencies:

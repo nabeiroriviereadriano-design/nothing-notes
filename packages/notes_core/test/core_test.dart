@@ -55,27 +55,27 @@ void main() {
     setUp(() => dir = Directory.systemTemp.createTempSync('nn_store_'));
     tearDown(() => dir.deleteSync(recursive: true));
 
-    test('les données et la file d\'attente survivent à un redémarrage', () {
+    test('les données et le journal des changements survivent à un redémarrage', () {
       final path = p.join(dir.path, 'a.db');
       var store = LocalStore.open(path);
       final device = store.deviceId;
-      var repo = NotesRepository(store: store, userId: 'u', filesDir: dir.path);
+      var repo = NotesRepository(store: store, filesDir: dir.path);
       final n = repo.createNote(title: 'Persistance', blocks: [Block(text: 'texte')]);
-      expect(store.pendingCount, 1);
+      expect(store.currentSeq, 1);
       store.close();
 
       store = LocalStore.open(path);
-      repo = NotesRepository(store: store, userId: 'u', filesDir: dir.path);
+      repo = NotesRepository(store: store, filesDir: dir.path);
       expect(store.deviceId, device);
       expect(repo.note(n.id)!.title, 'Persistance');
-      expect(repo.note(n.id)!.dirty, isTrue);
-      expect(store.pendingCount, 1);
+      expect(store.currentSeq, 1, reason: 'journal des changements conservé');
+      expect(store.get(EntityType.notes, n.id)!.rev, 1);
       store.close();
     });
 
     test('recherche instantanée : titre, contenu, accents, préfixes', () {
       final store = LocalStore.inMemory();
-      final repo = NotesRepository(store: store, userId: 'u', filesDir: dir.path);
+      final repo = NotesRepository(store: store, filesDir: dir.path);
       repo.createNote(title: 'BTS Électrotechnique', blocks: [Block(text: 'TIA Portal · **Grafcet** · Schémas')]);
       repo.createNote(title: 'Liste d\'achats', blocks: [Block(type: BlockType.todo, text: 'Bois'), Block(text: 'Vis')]);
       repo.createNote(title: 'Projet de jeu', blocks: [Block(text: 'FOREST ECHOES — level design')]);
@@ -94,17 +94,17 @@ void main() {
 
     test('enregistrer sans changement ne crée pas d\'opération', () {
       final store = LocalStore.inMemory();
-      final repo = NotesRepository(store: store, userId: 'u', filesDir: dir.path);
+      final repo = NotesRepository(store: store, filesDir: dir.path);
       final n = repo.createNote(title: 'Stable');
-      final rev = store.get(EntityType.notes, n.id)!.localRev;
+      final rev = store.get(EntityType.notes, n.id)!.rev;
       expect(repo.saveNote(repo.note(n.id)!), isFalse);
-      expect(store.get(EntityType.notes, n.id)!.localRev, rev);
+      expect(store.get(EntityType.notes, n.id)!.rev, rev);
       store.close();
     });
 
     test('corbeille : purge automatique après 30 jours', () {
       final store = LocalStore.inMemory();
-      final repo = NotesRepository(store: store, userId: 'u', filesDir: dir.path);
+      final repo = NotesRepository(store: store, filesDir: dir.path);
       final old = repo.createNote(title: 'Vieille');
       final recent = repo.createNote(title: 'Récente');
       final o = repo.note(old.id)!..trashedAt = DateTime.now().toUtc().subtract(const Duration(days: 31));
