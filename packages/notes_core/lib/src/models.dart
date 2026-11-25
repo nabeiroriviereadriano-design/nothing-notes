@@ -303,9 +303,11 @@ class Note {
     this.db,
     this.templateFor,
     Map<String, dynamic>? extra,
+    Map<String, dynamic>? contentExtra,
     this.dirty = false,
     this.conflictRow,
-  })  : blocks = blocks ?? [],
+  })  : contentExtra = contentExtra ?? {},
+        blocks = blocks ?? [],
         tags = tags ?? [],
         props = props ?? {},
         extra = extra ?? {},
@@ -352,6 +354,9 @@ class Note {
   /// Champs d'une version future, conservés tels quels.
   final Map<String, dynamic> extra;
 
+  /// Champs d'une version future à l'intérieur de `content` (à côté de `blocks`).
+  final Map<String, dynamic> contentExtra;
+
   /// Modifications pas encore transmises à un appareil associé.
   bool dirty;
 
@@ -383,6 +388,7 @@ class Note {
         db: r['db'] is Map ? Map<String, dynamic>.from(jsonClone(r['db']) as Map) : null,
         templateFor: r['template_for']?.toString(),
         extra: _extraOf(r, known),
+        contentExtra: r['content'] is Map ? _extraOf(Map<String, dynamic>.from(r['content'] as Map), const {'blocks'}) : null,
         dirty: dirty,
         conflictRow: conflict,
       );
@@ -393,7 +399,7 @@ class Note {
         ...jsonClone(extra),
         'id': id,
         'title': title,
-        'content': contentFromBlocks(blocks),
+        'content': {...jsonClone(contentExtra), ...contentFromBlocks(blocks)},
         'folder_id': folderId,
         'tags': tags,
         'favorite': favorite,

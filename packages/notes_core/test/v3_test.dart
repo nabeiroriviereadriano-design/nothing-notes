@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:notes_core/notes_core.dart';
@@ -35,18 +34,22 @@ void main() {
       final n = repo.createNote(title: 'Futur');
       final row = Map<String, dynamic>.from(store.get(EntityType.notes, n.id)!.data)
         ..['champ_futur'] = {'a': 1}
-        ..['content'] = jsonEncode([
-          {'id': 'b1', 'type': 'p', 'text': 'x', 'couleur': 'rouge'},
-          {'id': 'b2', 'type': 'bloc_futur', 'donnees': [1, 2]},
-        ]);
+        ..['content'] = {
+          'blocks': [
+            {'id': 'b1', 'type': 'p', 'text': 'x', 'couleur': 'rouge'},
+            {'id': 'b2', 'type': 'bloc_futur', 'donnees': [1, 2]},
+          ],
+          'format_futur': 2,
+        };
       store.saveLocal(EntityType.notes, row);
       final loaded = repo.note(n.id)!..title = 'Futur modifié';
       repo.saveNote(loaded);
       final saved = store.get(EntityType.notes, n.id)!.data;
       expect(saved['champ_futur'], {'a': 1});
-      final blocks = jsonDecode(saved['content'] as String) as List;
+      final blocks = (saved['content'] as Map)['blocks'] as List;
       expect(blocks[0]['couleur'], 'rouge');
       expect(blocks[1], {'id': 'b2', 'type': 'bloc_futur', 'donnees': [1, 2]});
+      expect((saved['content'] as Map)['format_futur'], 2);
     });
 
     test('changer uniquement une propriété, une icône ou le parent est bien enregistré', () {

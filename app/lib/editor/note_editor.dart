@@ -314,6 +314,9 @@ class NoteEditorState extends State<NoteEditor> {
     note!.extra
       ..clear()
       ..addAll(fresh.extra);
+    note!.contentExtra
+      ..clear()
+      ..addAll(fresh.contentExtra);
     _applying = false;
     _focused = _blocks.indexWhere((b) => b.focus.hasFocus);
     setState(() {});
@@ -352,7 +355,7 @@ class NoteEditorState extends State<NoteEditor> {
   // ------------------------------------------------------------------ annuler / rétablir
   Map<String, dynamic> _state() {
     _collect();
-    return {'title': note!.title, 'content': contentFromBlocks(note!.blocks)};
+    return {'title': note!.title, 'content': note!.toRow()['content']};
   }
 
   void _snapshot({bool force = false}) {
@@ -529,7 +532,7 @@ class NoteEditorState extends State<NoteEditor> {
       case 'task':
         final b = Block(type: BlockType.todo)..task = TaskInfo(status: TaskStatus.todo);
         if (emptyPara) {
-          _setType(cur!, BlockType.todo);
+          _setType(cur, BlockType.todo);
           cur.block.task = TaskInfo(status: TaskStatus.todo);
           cur.focus.requestFocus();
         } else {
@@ -541,17 +544,17 @@ class NoteEditorState extends State<NoteEditor> {
         await addAttachment(image: false);
       case BlockType.divider:
         if (emptyPara) {
-          final i = _blocks.indexOf(cur!);
+          final i = _blocks.indexOf(cur);
           _setType(cur, BlockType.divider, text: '');
           _insertBlock(i + 1, Block(), focusAtStart: true);
         } else {
           insertDivider();
         }
       case BlockType.table:
-        if (emptyPara) _removeAt(_blocks.indexOf(cur!), focusPrevious: false);
+        if (emptyPara) _removeAt(_blocks.indexOf(cur), focusPrevious: false);
         insertTable();
       case BlockType.toggle:
-        final i = emptyPara ? _blocks.indexOf(cur!) : _insertIndex;
+        final i = emptyPara ? _blocks.indexOf(cur) : _insertIndex;
         if (emptyPara) _removeAt(i, focusPrevious: false);
         _insertBlock(i, Block(type: BlockType.toggle, extra: {'body': ''}), focusAtStart: true);
       default:

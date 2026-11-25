@@ -121,9 +121,9 @@ void main() {
       seed();
       downgradeToV2(dbPath);
       final bytes = File(dbPath).readAsBytesSync();
-      // Corrompt une page de données (pas l'en-tête) pour que l'intégrité échoue.
+      // Corrompt toutes les pages après la première (l'en-tête reste lisible).
       final broken = [...bytes];
-      for (var i = 4096 + 100; i < 4096 + 1200 && i < broken.length; i++) {
+      for (var i = 4096; i < broken.length; i++) {
         broken[i] = 0xAB;
       }
       File(dbPath).writeAsBytesSync(broken);
