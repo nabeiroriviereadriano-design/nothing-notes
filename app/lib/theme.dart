@@ -148,10 +148,11 @@ ThemeData buildTheme(Brightness b) {
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(foregroundColor: n.fg, shape: const StadiumBorder()),
     ),
-    floatingActionButtonTheme: FloatingActionButtonThemeData(
-      backgroundColor: n.invertedBg,
-      foregroundColor: n.invertedFg,
-      shape: const CircleBorder(),
+    // Accent rouge réservé aux actions principales (contraste blanc/rouge ≈ 4,6:1).
+    floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      backgroundColor: NColors.red,
+      foregroundColor: Colors.white,
+      shape: CircleBorder(),
       elevation: 2,
     ),
     chipTheme: ChipThemeData(
@@ -347,6 +348,41 @@ class RedDot extends StatelessWidget {
     );
   }
 }
+
+/// Badge de priorité d'une tâche (0 = aucune, 1 basse, 2 moyenne, 3 haute).
+class PriorityBadge extends StatelessWidget {
+  const PriorityBadge(this.priority, {super.key});
+  final int priority;
+
+  static String label(int p) => switch (p) { 3 => 'Haute', 2 => 'Moyenne', 1 => 'Basse', _ => 'Aucune' };
+
+  @override
+  Widget build(BuildContext context) {
+    if (priority <= 0) return const SizedBox.shrink();
+    final nn = context.nn;
+    final high = priority >= 3;
+    final mid = priority == 2;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: high ? NColors.red : Colors.transparent,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: high || mid ? NColors.red : nn.line),
+      ),
+      child: Text(
+        '!' * priority + ' ${label(priority)}',
+        style: TextStyle(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w600,
+          color: high ? Colors.white : (mid ? (context.isDark ? const Color(0xFFFF4D5A) : NColors.red) : nn.mid),
+        ),
+      ),
+    );
+  }
+}
+
+/// Rouge lisible sur le fond courant (texte rouge sur fond sombre légèrement éclairci).
+Color redText(BuildContext context) => context.isDark ? const Color(0xFFFF4D5A) : NColors.red;
 
 /// Couleurs proposées pour les étiquettes et dossiers.
 const kLabelColors = <String>[

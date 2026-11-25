@@ -104,10 +104,28 @@ class LocalStore {
     _seq = int.tryParse(getMeta('seq') ?? '') ?? 0;
   }
 
-  factory LocalStore.open(String path) => LocalStore._(sqlite3.open(path));
+  factory LocalStore.open(String path) {
+    final db = sqlite3.open(path);
+    try {
+      return LocalStore._(db);
+    } catch (_) {
+      db.dispose(); // libère le fichier (Windows) pour pouvoir le restaurer
+      rethrow;
+    }
+  }
   factory LocalStore.inMemory() => LocalStore._(sqlite3.openInMemory());
 
+  /// Version du schéma de la base. Historique :
+  ///  * 2 — Nothing Notes 2.0 (synchronisation locale) ;
+  ///  * 3 — Nothing Notes 3.0 : ajout de la table `links` (index des liens
+  ///    internes entre pages). Migration purement additive : aucune table
+  ///    existante n'est modifiée, aucune ligne n'est réécrite.
+  static const schemaVersion = 3;
+
   final Database _db;
+
+  /// Accès bas niveau, réservé à la sauvegarde et à la vérification des données.
+  Database get database => _db;
   final _changes = StreamController<EntityType>.broadcast();
   int _txDepth = 0;
   int _seq = 0;
@@ -174,6 +192,28 @@ class LocalStore {
         );
       ''');
       _db.userVersion = 2;
+    }
+    if (_db.userVersion < 3) {
+      _db.execute('BEGIN IMMEDIATE');
+      try {
+        _db.execute('''
+          CREATE TABLE IF NOT EXISTS links (
+            src TEXT NOT NULL,
+            dst TEXT NOT NULL,
+            PRIMARY KEY (src, dst)
+          );
+          CREATE INDEX IF NOT EXISTS links_dst ON links (dst);
+        ''');
+        // Index dérivé, calculé à partir des notes (lues, jamais réécrites).
+        for (final r in _db.select("SELECT id, data FROM entities WHERE entity = 'notes'")) {
+          _indexLinks(r['id'] as String, _decode(r['data'])!);
+        }
+        _db.userVersion = 3;
+        _db.execute('COMMIT');
+      } catch (_) {
+        _db.execute('ROLLBACK');
+        rethrow;
+      }
     }
   }
 
@@ -614,10 +654,32 @@ class LocalStore {
   // ------------------------------------------------------------ recherche
   void _indexNote(String id, Map<String, dynamic> data) {
     _db.execute('DELETE FROM notes_fts WHERE id = ?', [id]);
+    _indexLinks(id, data);
     if (asBool(data['purged'])) return;
+    final body = StringBuffer(plainText(blocksFromContent(data['content'])));
+    // Valeurs des propriétés (entrées de base de données) : trouvables par la recherche.
+    final props = data['props'];
+    if (props is Map) {
+      for (final v in props.values) {
+        if (v == null || v is bool) continue;
+        body.write('\n${v is List ? v.join(' ') : v}');
+      }
+    }
     _db.execute('INSERT INTO notes_fts(id, title, body) VALUES (?, ?, ?)',
-        [id, (data['title'] ?? '').toString(), plainText(blocksFromContent(data['content']))]);
+        [id, (data['title'] ?? '').toString(), body.toString()]);
   }
+
+  void _indexLinks(String id, Map<String, dynamic> data) {
+    _db.execute('DELETE FROM links WHERE src = ?', [id]);
+    if (asBool(data['purged'])) return;
+    for (final dst in linkedPageIds(blocksFromContent(data['content']))) {
+      if (dst != id) _db.execute('INSERT OR IGNORE INTO links(src, dst) VALUES (?, ?)', [id, dst]);
+    }
+  }
+
+  /// Pages qui contiennent un lien vers [id] (rétroliens).
+  List<String> backlinks(String id) =>
+      _db.select('SELECT src FROM links WHERE dst = ?', [id]).map((r) => r['src'] as String).toList();
 
   /// Recherche plein texte instantanée (titre et contenu, sans accents,
   /// préfixes acceptés : « élec » trouve « Électrotechnique »).

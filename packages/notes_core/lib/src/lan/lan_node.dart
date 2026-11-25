@@ -14,7 +14,12 @@ import 'sync_driver.dart';
 /// Port TCP de synchronisation et port UDP des annonces.
 const kDefaultSyncPort = 45893;
 const kDefaultDiscoveryPort = 45892;
-const _protocolVersion = 1;
+/// Version du protocole. 2 = Nothing Notes 3.x (pages, bases, tâches) :
+/// un appareil resté en 2.x ne conserve pas les nouveaux champs, la
+/// synchronisation avec lui est donc refusée tant qu'il n'est pas mis à jour.
+/// Version du protocole de synchronisation. 2 = Nothing Notes 3.x (pages,
+/// bases, tâches) : refuse les appareils 2.0, qui perdraient ces champs.
+const kProtocolVersion = 2;
 
 /// Échec d'une association par code.
 class PairingError implements Exception {
@@ -29,13 +34,17 @@ class PairingError implements Exception {
 
 /// Appareil associé et son état de connexion.
 class PeerView {
-  PeerView(this.info, {required this.connected, required this.syncing, required this.rejected});
+  PeerView(this.info,
+      {required this.connected, required this.syncing, required this.rejected, this.outdated = false});
   final PeerInfo info;
   final bool connected;
   final bool syncing;
 
   /// L'autre appareil ne reconnaît plus l'association (elle y a été supprimée).
   final bool rejected;
+
+  /// L'autre appareil utilise une version incompatible de Nothing Notes.
+  final bool outdated;
 }
 
 class _Session {
@@ -145,7 +154,11 @@ class LanNode {
     this.enableScan = true,
     this.retryInterval = const Duration(seconds: 5),
     this.debounce = const Duration(milliseconds: 400),
+    this.protocolVersion = kProtocolVersion,
   });
+
+  /// Version du protocole annoncée (modifiable uniquement pour les tests).
+  final int protocolVersion;
 
   final LocalStore store;
   final String filesDir;
@@ -175,6 +188,7 @@ class LanNode {
   final _sessions = <String, _Session>{};
   final _dialing = <String>{};
   final _rejected = <String>{};
+  final _outdated = <String>{};
   final _status = StreamController<SyncStatus>.broadcast();
   final _paired = StreamController<PeerInfo>.broadcast();
   final _pairingEvents = StreamController<void>.broadcast();
@@ -207,7 +221,8 @@ class LanNode {
           PeerView(p,
               connected: _sessions.containsKey(p.id),
               syncing: _sessions[p.id]?.running ?? false,
-              rejected: _rejected.contains(p.id))
+              rejected: _rejected.contains(p.id),
+              outdated: _outdated.contains(p.id))
       ];
 
   // ------------------------------------------------------------------ cycle de vie
@@ -283,6 +298,13 @@ class LanNode {
       for (final s in _sessions.values) {
         error ??= s.error;
       }
+      final outdated = [
+        for (final p in all)
+          if (_outdated.contains(p.id) && !_sessions.containsKey(p.id)) p.name
+      ];
+      if (outdated.isNotEmpty) {
+        error ??= 'Mettez à jour Nothing Notes sur « ${outdated.join(' », « ')} » pour reprendre la synchronisation.';
+      }
       DateTime? last;
       for (final p in all) {
         final at = p.lastSync;
@@ -291,7 +313,7 @@ class LanNode {
       final state = syncing
           ? SyncState.syncing
           : connected == 0
-              ? SyncState.offline
+              ? (outdated.isNotEmpty ? SyncState.error : SyncState.offline)
               : error != null
                   ? SyncState.error
                   : pending > 0
@@ -449,7 +471,7 @@ class LanNode {
       wire = Wire(socket);
       final serverNonce = hexOf(randomBytes(16));
       wire.sendJson({
-        'v': _protocolVersion,
+        'v': protocolVersion,
         'id': store.deviceId,
         'name': store.deviceName,
         'plat': platform,
@@ -460,6 +482,11 @@ class LanNode {
       final mode = m['mode'];
       final clientId = m['id'];
       if (clientId is! String || clientId.isEmpty || clientId == store.deviceId) throw HandshakeError('invalid');
+      if (m['v'] != protocolVersion) {
+        wire.sendJson({'error': 'version', 'v': protocolVersion});
+        if (store.peer(clientId) != null && _outdated.add(clientId)) _publish();
+        throw HandshakeError('version');
+      }
       final List<int> secret;
       if (mode == 'pair') {
         final code = pairingCode;
@@ -530,7 +557,10 @@ class LanNode {
       final hello = await wire.readJson(timeout: const Duration(seconds: 6));
       final serverId = hello['id'];
       if (serverId is! String || serverId.isEmpty || serverId == store.deviceId) throw HandshakeError('invalid');
-      if (hello['v'] != _protocolVersion) throw HandshakeError('version', 'versions de Nothing Notes incompatibles');
+      if (hello['v'] != protocolVersion) {
+        if (store.peer(serverId) != null && _outdated.add(serverId)) _publish();
+        throw HandshakeError('version', 'versions de Nothing Notes incompatibles');
+      }
       if (expectId != null && serverId != expectId) throw HandshakeError('invalid');
       final String mode;
       final List<int> secret;
@@ -548,6 +578,7 @@ class LanNode {
       final side = SpekeSide(secret);
       final clientNonce = hexOf(randomBytes(16));
       wire.sendJson({
+        'v': protocolVersion,
         'mode': mode,
         'id': store.deviceId,
         'name': store.deviceName,
@@ -563,6 +594,7 @@ class LanNode {
           _rejected.add(serverId);
           _publish();
         }
+        if (code == 'version' && store.peer(serverId) != null && _outdated.add(serverId)) _publish();
         throw HandshakeError(code);
       }
       final transcript =
@@ -581,6 +613,7 @@ class LanNode {
         if (info != null && !_paired.isClosed) _paired.add(info);
       }
       _rejected.remove(serverId);
+      _outdated.remove(serverId);
       _attach(serverId, SecureChannel(wire, sendKey: sk.clientToServer, receiveKey: sk.serverToClient),
           tcpClient: true, address: host, port: port, name: name, platform: plat);
       return serverId;
@@ -606,6 +639,7 @@ class LanNode {
 
   void _attach(String peerId, SecureChannel channel,
       {required bool tcpClient, String? address, int? port, String? name, String? platform}) {
+    _outdated.remove(peerId);
     final driver = store.isDriverFor(peerId);
     final rpc = RpcPeer(channel);
     final existing = _sessions[peerId];
@@ -704,7 +738,10 @@ class LanNode {
         return store.peer(await _dial(host, port, pairCode: digits));
       } on HandshakeError catch (e) {
         if (e.code == 'badsecret') throw PairingError('badcode', 'Code incorrect.');
-        if (e.code == 'version') throw PairingError('unreachable', e.toString());
+        if (e.code == 'version') {
+          throw PairingError('version',
+              'L\'autre appareil utilise une autre version de Nothing Notes. Installez la même version sur les deux appareils.');
+        }
         return null; // cet appareil n'attend pas d'association
       } catch (_) {
         blocked = true; // vu sur le réseau mais connexion impossible

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -50,7 +51,18 @@ class NotesRepository {
     return n.purged ? null : n;
   }
 
-  Note createNote({String title = '', List<Block>? blocks, String? folderId, List<String>? tags}) {
+  Note createNote({
+    String title = '',
+    List<Block>? blocks,
+    String? folderId,
+    List<String>? tags,
+    String? parentId,
+    String kind = PageKind.page,
+    String? icon,
+    Map<String, dynamic>? props,
+    Map<String, dynamic>? db,
+    String? templateFor,
+  }) {
     final n = Note(
       id: newId(),
       title: title,
@@ -58,6 +70,12 @@ class NotesRepository {
       folderId: folderId,
       tags: tags,
       deviceId: deviceId,
+      parentId: parentId,
+      kind: kind,
+      icon: icon,
+      props: props,
+      db: db,
+      templateFor: templateFor,
     );
     store.saveLocal(EntityType.notes, n.toRow());
     return n;
@@ -69,8 +87,10 @@ class NotesRepository {
     final cur = store.get(EntityType.notes, n.id);
     final row = n.toRow();
     if (cur != null) {
-      const fields = ['title', 'content', 'folder_id', 'tags', 'favorite', 'archived', 'trashed_at', 'purged'];
-      if (fields.every((f) => jsonEq(row[f], cur.data[f]))) return false;
+      // Rien à enregistrer si seul l'horodatage différerait.
+      const meta = {'updated_at', 'device_id', 'created_at'};
+      final keys = {...row.keys, ...cur.data.keys}.where((k) => !meta.contains(k));
+      if (keys.every((f) => jsonEq(row[f], cur.data[f]))) return false;
     }
     if (touch) {
       n.updatedAt = DateTime.now().toUtc();
@@ -93,20 +113,173 @@ class NotesRepository {
   void setArchived(String id, bool v) => _update(id, (n) => n.archived = v);
   void moveToFolder(String id, String? folderId) => _update(id, (n) => n.folderId = folderId);
   void setTags(String id, List<String> tags) => _update(id, (n) => n.tags = [...tags]);
-  void trashNote(String id) => _update(id, (n) => n.trashedAt = DateTime.now().toUtc());
-  void restoreNote(String id) => _update(id, (n) => n.trashedAt = null);
+  /// Met la page à la corbeille, avec ses sous-pages (même horodatage :
+  /// elles seront restaurées ensemble).
+  void trashNote(String id) {
+    final at = DateTime.now().toUtc();
+    store.transaction(() {
+      for (final d in [id, ...descendantIds(id)]) {
+        final n = note(d);
+        if (n == null || n.trashed) continue;
+        n.trashedAt = at;
+        saveNote(n, touch: false);
+      }
+    });
+  }
 
-  List<Block> _copyBlocks(List<Block> blocks) =>
-      blocks.map((b) => Block.fromJson({...jsonClone(b.toJson()), 'id': newId()})).toList();
+  /// Restaure la page et les sous-pages mises à la corbeille en même temps qu'elle.
+  void restoreNote(String id) {
+    final root = note(id);
+    if (root == null) return;
+    final at = root.trashedAt;
+    store.transaction(() {
+      for (final d in [id, ...descendantIds(id)]) {
+        final n = note(d);
+        if (n == null || n.trashedAt == null) continue;
+        if (d != id && at != null && n.trashedAt!.difference(at).inSeconds.abs() > 2) continue;
+        n.trashedAt = null;
+        saveNote(n, touch: false);
+      }
+    });
+  }
 
-  Note duplicateNote(String id, {String suffix = ' (copie)'}) {
+  List<Block> _copyBlocks(List<Block> blocks) => blocks.map((b) => b.cloneFresh()).toList();
+
+  /// Duplique la page (et ses sous-pages).
+  Note duplicateNote(String id, {String suffix = ' (copie)', String? parentId, bool keepParent = true}) {
     final src = note(id)!;
-    return createNote(
-      title: '${src.title}$suffix',
-      blocks: _copyBlocks(src.blocks),
-      folderId: src.folderId,
-      tags: [...src.tags],
-    );
+    late Note copy;
+    store.transaction(() {
+      copy = createNote(
+        title: '${src.title}$suffix',
+        blocks: _copyBlocks(src.blocks),
+        folderId: src.folderId,
+        tags: [...src.tags],
+        parentId: parentId ?? (keepParent ? src.parentId : null),
+        kind: src.kind,
+        icon: src.icon,
+        props: jsonClone(src.props),
+        db: src.db == null ? null : jsonClone(src.db),
+        templateFor: src.templateFor,
+      );
+      for (final c in childrenOf(id)) {
+        duplicateNote(c.id, suffix: '', parentId: copy.id);
+      }
+    });
+    return copy;
+  }
+
+  // ---------------------------------------------------------------- pages et sous-pages
+  /// Sous-pages directes (hors corbeille), dans l'ordre de création.
+  List<Note> childrenOf(String id, {bool includeTrashed = false}) => allNotes()
+      .where((n) => n.parentId == id && (includeTrashed || !n.trashed) && !n.isTemplate)
+      .toList()
+    ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+  /// Identifiants de toutes les sous-pages, à tous les niveaux.
+  Set<String> descendantIds(String id) {
+    final byParent = <String, List<String>>{};
+    for (final n in allNotes()) {
+      if (n.parentId != null) byParent.putIfAbsent(n.parentId!, () => []).add(n.id);
+    }
+    final out = <String>{};
+    final stack = [...?byParent[id]];
+    while (stack.isNotEmpty) {
+      final c = stack.removeLast();
+      if (c == id || !out.add(c)) continue;
+      stack.addAll(byParent[c] ?? const []);
+    }
+    return out;
+  }
+
+  /// Chemin depuis la page racine jusqu'au parent de [id] (fil d'Ariane).
+  List<Note> ancestorsOf(String id) {
+    final out = <Note>[];
+    final seen = <String>{id};
+    var cur = note(id)?.parentId;
+    while (cur != null && seen.add(cur)) {
+      final p = note(cur);
+      if (p == null) break;
+      out.insert(0, p);
+      cur = p.parentId;
+    }
+    return out;
+  }
+
+  /// Vrai si [parentId] peut devenir le parent de [id] (pas de boucle).
+  bool canMoveUnder(String id, String? parentId) =>
+      parentId == null || (parentId != id && !descendantIds(id).contains(parentId));
+
+  /// Déplace la page sous une autre page (ou à la racine avec `null`).
+  void movePage(String id, String? parentId) {
+    if (!canMoveUnder(id, parentId)) throw ArgumentError('Une page ne peut pas être déplacée dans ses propres sous-pages.');
+    _update(id, (n) => n.parentId = parentId);
+  }
+
+  /// Crée une sous-page (même dossier que la page parente).
+  Note createSubPage(String parentId, {String title = '', List<Block>? blocks}) {
+    final parent = note(parentId);
+    return createNote(title: title, blocks: blocks, parentId: parentId, folderId: parent?.folderId);
+  }
+
+  void setIcon(String id, String? icon) => _update(id, (n) => n.icon = (icon == null || icon.isEmpty) ? null : icon);
+
+  // ---------------------------------------------------------------- pages récentes (propres à l'appareil)
+  void markOpened(String id) {
+    final list = recentIds().where((x) => x != id).toList()..insert(0, id);
+    store.setMeta('recent_pages', jsonEncode(list.take(20).toList()));
+  }
+
+  List<String> recentIds() {
+    try {
+      return (jsonDecode(store.getMeta('recent_pages') ?? '[]') as List).map((e) => e.toString()).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  List<Note> recentPages({int limit = 8}) {
+    final out = <Note>[];
+    for (final id in recentIds()) {
+      final n = note(id);
+      if (n != null && !n.trashed && !n.isTemplate) out.add(n);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- liens internes
+  /// Pages qui contiennent un lien vers [id].
+  List<Note> backlinksOf(String id) => [
+        for (final src in store.backlinks(id))
+          if (note(src) case final n? when !n.trashed && !n.isTemplate) n
+      ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+  /// Pages proposées pour un lien interne (recherche par titre, sinon récentes).
+  List<Note> findPages(String query, {String? excludeId, int limit = 12}) {
+    final q = foldText(query.trim());
+    final all = allNotes().where((n) => !n.trashed && !n.isTemplate && n.id != excludeId).toList();
+    if (q.isEmpty) {
+      final rec = recentPages(limit: limit).where((n) => n.id != excludeId).toList();
+      if (rec.length >= limit) return rec;
+      all.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return {...rec, ...all}.take(limit).toList();
+    }
+    int score(Note n) {
+      final t = foldText(n.title);
+      if (t == q) return 0;
+      if (t.startsWith(q)) return 1;
+      if (t.split(RegExp(r'\s+')).any((w) => w.startsWith(q))) return 2;
+      if (t.contains(q)) return 3;
+      return 9;
+    }
+
+    final hits = all.where((n) => score(n) < 9).toList()
+      ..sort((a, b) {
+        final c = score(a).compareTo(score(b));
+        return c != 0 ? c : b.updatedAt.compareTo(a.updatedAt);
+      });
+    return hits.take(limit).toList();
   }
 
   /// Suppression définitive : la note devient une pierre tombale vide,
@@ -115,6 +288,9 @@ class NotesRepository {
     final n = note(id);
     if (n == null) return;
     store.transaction(() {
+      for (final d in descendantIds(id)) {
+        if (note(d)?.trashed ?? false) purgeNote(d);
+      }
       for (final a in attachmentsOf(id)) {
         deleteAttachment(a.id);
       }
@@ -288,7 +464,7 @@ class NotesRepository {
   List<Note> search(String query) {
     final q = foldText(query.trim());
     if (q.isEmpty) return [];
-    final byId = {for (final n in allNotes()) n.id: n};
+    final byId = {for (final n in allNotes()) if (!n.isTemplate) n.id: n};
     final result = <String>[];
     for (final id in store.search(query)) {
       if (byId.containsKey(id)) result.add(id);

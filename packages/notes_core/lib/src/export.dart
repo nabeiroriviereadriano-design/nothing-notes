@@ -5,7 +5,24 @@ import 'models.dart';
 
 /// Informations annexes pour l'export d'une note.
 class ExportContext {
-  ExportContext({this.tagNames = const [], this.folderName, this.attachmentName, this.imageDataUri});
+  ExportContext({
+    this.tagNames = const [],
+    this.folderName,
+    this.attachmentName,
+    this.imageDataUri,
+    this.properties = const [],
+    this.table,
+    this.subPages = const [],
+  });
+
+  /// Propriétés de l'entrée de base de données (nom, valeur affichée).
+  final List<(String, String)> properties;
+
+  /// Contenu d'une base de données : première ligne = en-têtes.
+  final List<List<String>>? table;
+
+  /// Titres des sous-pages.
+  final List<String> subPages;
 
   final List<String> tagNames;
   final String? folderName;
@@ -32,6 +49,10 @@ String exportTxt(Note n, [ExportContext? ctx]) {
     ..writeln(_title(n))
     ..writeln('=' * _title(n).length)
     ..writeln();
+  for (final (k, v) in ctx?.properties ?? const <(String, String)>[]) {
+    b.writeln('$k : $v');
+  }
+  if (ctx?.properties.isNotEmpty ?? false) b.writeln();
   var counter = 0;
   for (final blk in n.blocks) {
     if (blk.type != BlockType.numbered) counter = 0;
@@ -43,9 +64,16 @@ String exportTxt(Note n, [ExportContext? ctx]) {
           ..writeln(t.toUpperCase());
         break;
       case BlockType.heading2:
+      case BlockType.heading3:
         b
           ..writeln()
           ..writeln(t);
+        break;
+      case BlockType.toggle:
+        b.writeln('▸ $t');
+        for (final l in stripInlineMarkers(blk.body).split('\n')) {
+          b.writeln('    $l');
+        }
         break;
       case BlockType.quote:
         b.writeln('> $t');
@@ -79,11 +107,45 @@ String exportTxt(Note n, [ExportContext? ctx]) {
         b.writeln(t);
     }
   }
+  _txtExtras(b, ctx);
   return b.toString();
 }
 
+void _txtExtras(StringBuffer b, ExportContext? ctx) {
+  final t = ctx?.table;
+  if (t != null && t.isNotEmpty) {
+    b.writeln();
+    for (final r in t) {
+      b.writeln(r.join('\t'));
+    }
+  }
+  if (ctx != null && ctx.subPages.isNotEmpty) {
+    b
+      ..writeln()
+      ..writeln('Sous-pages :');
+    for (final s in ctx.subPages) {
+      b.writeln('• $s');
+    }
+  }
+}
+
 // ------------------------------------------------------------------ Markdown
-String _mdInline(String s) => s.replaceAllMapped(RegExp(r'\+\+(.+?)\+\+'), (m) => '<u>${m.group(1)}</u>');
+String _mdInline(String s) => s
+    .replaceAllMapped(RegExp(r'\+\+(.+?)\+\+'), (m) => '<u>${m.group(1)}</u>')
+    // Liens internes : le titre de la page, sans lien (l'identifiant n'a pas de sens hors de l'appli).
+    .replaceAllMapped(RegExp(r'\[([^\]\n]+)\]\(nn:page:[A-Za-z0-9-]+\)'), (m) => '**${m.group(1)}**');
+
+String _mdCell(String c) => c.replaceAll('|', r'\|').replaceAll('\n', ' ');
+
+void _mdTable(StringBuffer b, List<List<String>> rows) {
+  if (rows.isEmpty) return;
+  String line(List<String> r) => '| ${r.map(_mdCell).join(' | ')} |';
+  b.writeln(line(rows.first));
+  b.writeln('| ${rows.first.map((_) => '---').join(' | ')} |');
+  for (final r in rows.skip(1)) {
+    b.writeln(line(r));
+  }
+}
 
 String exportMarkdown(Note n, [ExportContext? ctx]) {
   final b = StringBuffer()..writeln('# ${_title(n)}');
@@ -95,6 +157,12 @@ String exportMarkdown(Note n, [ExportContext? ctx]) {
     b
       ..writeln()
       ..writeln('*${meta.join(' · ')}*');
+  }
+  if (ctx != null && ctx.properties.isNotEmpty) {
+    b.writeln();
+    for (final (k, v) in ctx.properties) {
+      b.writeln('- **${_mdCell(k)}** : ${_mdCell(v)}');
+    }
   }
   b.writeln();
   var counter = 0;
@@ -110,6 +178,18 @@ String exportMarkdown(Note n, [ExportContext? ctx]) {
         break;
       case BlockType.heading2:
         b.writeln('### $t');
+        break;
+      case BlockType.heading3:
+        b.writeln('#### $t');
+        break;
+      case BlockType.toggle:
+        b
+          ..writeln('<details>')
+          ..writeln('<summary>${_esc.convert(stripInlineMarkers(blk.text))}</summary>')
+          ..writeln()
+          ..writeln(_mdInline(blk.body))
+          ..writeln()
+          ..writeln('</details>');
         break;
       case BlockType.quote:
         b.writeln(t.split('\n').map((l) => '> $l').join('\n'));
@@ -138,20 +218,25 @@ String exportMarkdown(Note n, [ExportContext? ctx]) {
         b.writeln(blk.type == BlockType.image ? '![$name]($name)' : '[$name]($name)');
         break;
       case BlockType.table:
-        final rows = blk.rows ?? const <List<String>>[];
-        if (rows.isNotEmpty) {
-          String line(List<String> r) => '| ${r.map((c) => c.replaceAll('|', r'\|').replaceAll('\n', ' ')).join(' | ')} |';
-          b.writeln(line(rows.first));
-          b.writeln('| ${rows.first.map((_) => '---').join(' | ')} |');
-          for (final r in rows.skip(1)) {
-            b.writeln(line(r));
-          }
-        }
+        _mdTable(b, blk.rows ?? const <List<String>>[]);
         break;
       default:
         b.writeln(t);
     }
     prev = blk.type;
+  }
+  if (ctx?.table case final t? when t.isNotEmpty) {
+    b.writeln();
+    _mdTable(b, t);
+  }
+  if (ctx != null && ctx.subPages.isNotEmpty) {
+    b
+      ..writeln()
+      ..writeln('**Sous-pages**')
+      ..writeln();
+    for (final s in ctx.subPages) {
+      b.writeln('- $s');
+    }
   }
   return b.toString();
 }
@@ -182,7 +267,11 @@ String inlineToHtml(String s) {
     if (t.styles.contains(InlineStyle.italic)) h = '<em>$h</em>';
     if (t.styles.contains(InlineStyle.underline)) h = '<u>$h</u>';
     if (t.styles.contains(InlineStyle.strike)) h = '<s>$h</s>';
-    if (t.link != null) h = '<a href="${_escAttr.convert(t.link!)}">$h</a>';
+    if (t.link != null) {
+      h = t.link!.startsWith(kPageLinkPrefix)
+          ? '<span class="pagelink">$h</span>'
+          : '<a href="${_escAttr.convert(t.link!)}">$h</a>';
+    }
     b.write(h);
   }
   return b.toString();
@@ -237,6 +326,12 @@ String exportHtml(Note n, [ExportContext? ctx]) {
       case BlockType.heading2:
         b.writeln('<h3>$h</h3>');
         break;
+      case BlockType.heading3:
+        b.writeln('<h4>$h</h4>');
+        break;
+      case BlockType.toggle:
+        b.writeln('<details${blk.collapsed ? '' : ' open'}><summary>$h</summary><p>${inlineToHtml(blk.body)}</p></details>');
+        break;
       case BlockType.quote:
         b.writeln('<blockquote>$h</blockquote>');
         break;
@@ -271,6 +366,22 @@ String exportHtml(Note n, [ExportContext? ctx]) {
     }
   }
   closeList();
+  String table(List<List<String>> rows) {
+    final t = StringBuffer('<table>');
+    for (var i = 0; i < rows.length; i++) {
+      final tag = i == 0 ? 'th' : 'td';
+      t.write('<tr>${rows[i].map((c) => '<$tag>${_esc.convert(c)}</$tag>').join()}</tr>');
+    }
+    return '$t</table>';
+  }
+
+  final props = (ctx == null || ctx.properties.isEmpty)
+      ? ''
+      : '<dl class="props">${ctx.properties.map((e) => '<dt>${_esc.convert(e.$1)}</dt><dd>${_esc.convert(e.$2)}</dd>').join()}</dl>';
+  if (ctx?.table case final t? when t.isNotEmpty) b.writeln(table(t));
+  if (ctx != null && ctx.subPages.isNotEmpty) {
+    b.writeln('<h3>Sous-pages</h3><ul>${ctx.subPages.map((s) => '<li>${_esc.convert(s)}</li>').join()}</ul>');
+  }
 
   final tags = ctx == null ? '' : ctx.tagNames.map((t) => '<span class="tag">${_esc.convert(t)}</span>').join();
   final folder = ctx?.folderName == null ? '' : '<span class="folder">${_esc.convert(ctx!.folderName!)}</span>';
@@ -289,7 +400,10 @@ String exportHtml(Note n, [ExportContext? ctx]) {
   h1::after { content:""; display:inline-block; width:3px; height:.9em; background:var(--red); margin-left:8px; vertical-align:-2px; }
   .meta { color:var(--mid); font-size:13px; margin-bottom:28px; }
   .tag, .folder { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 12px; margin-right:6px; }
-  h2 { font-size:24px; margin:28px 0 8px; } h3 { font-size:19px; margin:22px 0 6px; }
+  h2 { font-size:24px; margin:28px 0 8px; } h3 { font-size:19px; margin:22px 0 6px; } h4 { font-size:16px; margin:18px 0 4px; }
+  details { border:1px solid var(--line); border-radius:12px; padding:8px 14px; margin:10px 0; } summary { cursor:pointer; font-weight:600; }
+  .pagelink { border-bottom:1px solid var(--red); }
+  dl.props { display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; margin:0 0 24px; } dt { color:var(--mid); } dd { margin:0; }
   a { color:var(--red); }
   blockquote { border-left:3px solid var(--red); margin:12px 0; padding:4px 16px; color:var(--mid); }
   pre { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; overflow:auto; }
@@ -308,6 +422,7 @@ String exportHtml(Note n, [ExportContext? ctx]) {
 <body><main>
 <h1>${_esc.convert(_title(n))}</h1>
 <div class="meta">$folder$tags Modifiée le ${n.updatedAt.toLocal().toString().substring(0, 16)}</div>
+$props
 $b
 </main></body>
 </html>

@@ -10,7 +10,9 @@ import 'package:path/path.dart' as p;
 /// dossier de fichiers, ses propres clés, et un vrai nœud réseau (TCP +
 /// UDP sur la boucle locale). C'est exactement le code des applications.
 class Device {
-  Device._(this.name, this.dir, this.keys, this.udpPort, this.udpTargets);
+  Device._(this.name, this.dir, this.keys, this.udpPort, this.udpTargets, this.protocolVersion);
+
+  int protocolVersion;
 
   final String name;
   final Directory dir;
@@ -22,9 +24,10 @@ class Device {
   late LanNode node;
   int _port = 0;
 
-  static Future<Device> create(String name, {int udpPort = 0, List<(String, int)> udpTargets = const []}) async {
+  static Future<Device> create(String name,
+      {int udpPort = 0, List<(String, int)> udpTargets = const [], int protocolVersion = kProtocolVersion}) async {
     final dir = await Directory.systemTemp.createTemp('nn_${name}_');
-    final d = Device._(name, dir, MemoryKeyStore(), udpPort, udpTargets);
+    final d = Device._(name, dir, MemoryKeyStore(), udpPort, udpTargets, protocolVersion);
     d._open();
     await d.node.start();
     d._port = d.node.port;
@@ -56,6 +59,7 @@ class Device {
       enableScan: false,
       retryInterval: const Duration(milliseconds: 300),
       debounce: const Duration(milliseconds: 40),
+      protocolVersion: protocolVersion,
     );
 
   String get address => '127.0.0.1:${node.port}';

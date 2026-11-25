@@ -175,3 +175,27 @@ Types : `p`, `h1`, `h2`, `quote`, `bullet`, `numbered`, `todo`, `code`,
 `divider`, `image`, `file`, `table`. Mise en forme en ligne : `**gras**`,
 `*italique*`, `++souligné++`, `~~barré~~`, `` `code` ``, `[texte](lien)`.
 Les champs inconnus sont conservés (compatibilité entre versions).
+
+## Version 3.0 : pages, tâches, bases de données
+
+Rien n'a changé dans le stockage ni dans la synchronisation : tout tient dans
+les **champs facultatifs** des notes et des blocs, déjà synchronisés et fusionnés
+champ par champ.
+
+* **Pages** : `parent_id` sur la note. Pas de table d'arborescence, donc pas
+  d'état à réconcilier. Les boucles sont empêchées au déplacement, et une page
+  dont le parent est absent ou à la corbeille s'affiche au premier niveau.
+* **Bases de données** : une page `kind = database` dont le champ `db` décrit
+  les propriétés et les vues. Les entrées sont ses sous-pages, avec leurs
+  valeurs dans `props`. La fusion se fait **propriété par propriété**.
+* **Tâches** : champ `task` du bloc case à cocher, sans copie. La vue Tâches est
+  calculée à partir des pages.
+* **Modèles** : intégrés dans le code, ou pages `kind = template` (synchronisées).
+* **Liens** : syntaxe `[Titre](nn:page:<id>)` dans le texte. La table locale
+  `links` sert d'index pour les rétroliens ; elle est recalculée à partir des
+  notes et ne se synchronise pas.
+* **Récents** : propres à chaque appareil (table `meta`), non synchronisés.
+* **Compatibilité** : tous les modèles conservent les champs qu'ils ne
+  connaissent pas. Le protocole passe en version 2 et refuse les appareils 2.0,
+  qui les effaceraient.
+* **Migration** : voir [MIGRATION-3.0.md](MIGRATION-3.0.md).

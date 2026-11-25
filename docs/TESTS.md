@@ -4,7 +4,7 @@ Tous les tests tournent automatiquement dans GitHub Actions à chaque
 modification (onglet **Actions**). Aucun résultat n'est annoncé sans avoir été
 exécuté.
 
-## 1. Synchronisation entre appareils — 22 / 22
+## 1. Synchronisation entre appareils — 26 / 26
 
 Fichier [`packages/notes_core/test/lan_test.dart`](../packages/notes_core/test/lan_test.dart).
 Chaque « appareil » a sa propre base SQLite sur disque, son propre dossier de
@@ -26,6 +26,7 @@ embarqué dans les applications.
 | 8 | Plusieurs appareils | téléphone ↔ PC ↔ tablette : 12 notes, modifications croisées → mêmes données partout, sans conflit |
 | 9 | Sécurité | un appareil non associé est refusé, même en **usurpant l'identifiant** d'un appareil associé ; un appareil retiré ne peut plus se synchroniser |
 | — | Robustesse | 450 notes reçues par pages ; dossiers, sous-dossiers et étiquettes ; saisie continue pendant la synchronisation ; état « hors de portée » puis retour |
+| — | **3.0** | appareil en ancienne version : association **refusée**, rien n'est échangé ; appareil associé revenu à une ancienne version : synchro suspendue avec le message « Mettez à jour… », puis reprise après mise à jour ; sous-pages, base de données, propriétés, tâches (statut, échéance, priorité) et blocs repliables transmis intacts ; deux propriétés différentes modifiées hors ligne sur deux appareils → **les deux valeurs gardées**, sans conflit |
 
 ## 2. Cryptographie et canal — 13 / 13
 
@@ -47,22 +48,79 @@ décision **indépendante de l'heure de modification**), base locale, recherche
 sans accents et par préfixe, corbeille de 30 jours, mise en forme, exports
 Markdown / TXT / HTML.
 
-**Total du noyau : 63 / 63.**
+## 4. Fonctions 3.0 — 31 / 31
 
-## 4. Applications
+[`v3_test.dart`](../packages/notes_core/test/v3_test.dart) :
+
+* **compatibilité** : une note ordinaire garde exactement la forme 2.0 ; les
+  champs inconnus (note, contenu, blocs) sont conservés ; changer seulement une
+  propriété, une icône ou le parent est bien enregistré ;
+* **pages** : arborescence, fil d'Ariane, déplacement sans boucle, corbeille et
+  restauration en cascade (sans toucher aux sous-pages supprimées avant),
+  suppression définitive en cascade, duplication profonde, récents propres à
+  l'appareil ;
+* **liens** : rétroliens mis à jour et retirés, liens dans les blocs repliables
+  et les tableaux, recherche de page pour une mention ;
+* **modèles** : les 7 modèles intégrés ; appliquer un modèle **n'écrase jamais**
+  le contenu ; page vide remplie ; modèle personnalisé hors des listes et de la
+  recherche ;
+* **tâches** : suivi sans doublon, statut, échéance, priorité, filtres (dont en
+  retard), case ⇔ terminée, tâche en corbeille masquée ;
+* **bases** : propriétés de chaque type, tri (vides à la fin), filtres nombre,
+  statut, case et date, recherche dans les propriétés, retirer une propriété
+  garde les valeurs, champs inconnus du schéma conservés ;
+* **import Markdown** : éléments courants, aller-retour export → import, import
+  sans modifier l'existant, texte partagé ;
+* **export** : Titre 3, blocs repliables, liens internes et propriétés en
+  Markdown, HTML et TXT ;
+* **fusion** : propriétés différentes fusionnées, même propriété → conflit,
+  parent d'un côté et titre de l'autre → les deux gardés.
+
+## 5. Migration et sauvegardes — 7 / 7
+
+[`migration_test.dart`](../packages/notes_core/test/migration_test.dart) :
+
+* **base produite par le vrai code de la version 2.0.0** : générée en CI par
+  [`tool/v2_fixture.dart`](../packages/notes_core/tool/v2_fixture.dart) dans
+  une copie de travail de la 2.0.0 (12 notes avec tous les types de blocs, 12
+  pièces jointes, note purgée, corbeille, historique, appareil associé, conflit
+  en attente), puis migrée : empreinte identique, tout est retrouvé et
+  modifiable, une note 2.0 modifiée en 3.0 garde sa forme ;
+* sauvegarde vérifiée créée **avant**, données identiques **après**, liens indexés ;
+* base déjà à jour : pas de sauvegarde inutile ; première installation ;
+* **échec forcé pendant la migration** → base d'origine remise en place ;
+* **base endommagée** → aucune migration, fichier non modifié ;
+* sauvegarder, modifier, restaurer → retour exact ; l'état remplacé reste
+  récupérable ; le journal de synchronisation ne recule jamais ; les
+  sauvegardes manuelles ne sont jamais supprimées.
+
+En plus, hors CI (données privées, jamais publiées) : migration rejouée sur la
+**copie réelle de votre base** → empreinte identique (12 notes, 19 pièces
+jointes, 76 versions d'historique…), et relecture/réécriture des 34 lignes et
+360 blocs par les modèles 3.0 → identiques.
+
+**Total du noyau : 105 / 105.**
+
+## 6. Applications
 
 | Vérification | Résultat |
 |---|---|
 | Analyse statique | aucune erreur ni avertissement (remarques d'information : API de Flutter signalées comme dépréciées par la dernière version) |
 | Interface bureau (1440×900) : trois colonnes, saisie, `[] ` → cases à cocher, Entrée → bloc suivant, gras, enregistrement local, nouvelle note | réussi |
 | Interface téléphone (400×860) : liste, ouverture d'une note, retour, recherche instantanée | réussi |
+| Pages : sous-page absente de la liste principale, fil d'Ariane, « Mentionnée dans », navigation parent ↔ sous-page | réussi |
+| `/` dans un bloc vide → menu → Titre 3 (le `/` est retiré) | réussi |
+| **L'éditeur ouvert ne réécrit jamais un champ modifié ailleurs** (parent, icône, propriété), puis saisie | réussi |
+| Base de données : tableau, valeur de statut affichée, nouvelle entrée ouverte avec ses propriétés | réussi |
+| Vue Tâches : tâches ouvertes par défaut, case non suivie absente, filtre « Terminées » | réussi |
+| Téléphone : bouton + → modèle « Réunion » → page créée avec sa structure | réussi |
 | Compilation de l'APK Android | réussie |
 | Compilation Windows (exécutable natif) | réussie |
 | L'exécutable Windows démarre et reste ouvert 12 s sans erreur | réussi |
 | Installation silencieuse sans droits administrateur, puis désinstallation | réussi |
 | Captures d'écran réelles (polices et icônes chargées), publiées sur la branche `captures` | générées |
 
-## 5. Ce qui n'est pas testé automatiquement
+## 7. Ce qui n'est pas testé automatiquement
 
 * **Un vrai téléphone et un vrai PC sur un vrai réseau.** Les tests passent par
   la boucle locale d'une seule machine. Ils ne couvrent ni le Wi-Fi de votre
@@ -70,7 +128,10 @@ Markdown / TXT / HTML.
   imposent, ni le pare-feu Windows, ni l'économie d'énergie d'Android.
 * La recherche de l'autre appareil par balayage du sous-réseau (désactivée
   dans les tests).
-* Le sélecteur de fichiers du système et l'export PDF.
+* Le sélecteur de fichiers du système (import Markdown, pièces jointes) et l'export PDF.
+* Le partage Android (canal natif) : compilé, mais pas exécuté sur un téléphone.
+* Le glisser-déposer des blocs, à la souris comme au doigt.
+* L'affichage des emojis d'icône de page (dépend des polices du système).
 
 À faire une fois après installation (5 minutes) : associer le téléphone et le
 PC, écrire une note sur le téléphone et la voir sur le PC, la modifier sur le

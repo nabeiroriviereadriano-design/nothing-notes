@@ -5,7 +5,7 @@
 <h1 align="center">NOTHING NOTES</h1>
 
 <p align="center">
-  Prise de notes minimaliste · Android + Windows · synchronisation directe, sans compte ni serveur
+  Pages, tâches et bases de données · Android + Windows · synchronisation directe, sans compte ni serveur
 </p>
 
 <p align="center">
@@ -25,6 +25,18 @@
   &nbsp;
   <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-appareils.png" width="250" alt="Association des appareils">
 </p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/windows-base-de-donnees.png" width="420" alt="Base de données, vue tableau">
+  &nbsp;
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/windows-taches.png" width="420" alt="Vue Tâches">
+</p>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-insertion-bloc.png" width="200" alt="Menu d'insertion « / »">
+  &nbsp;
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-base-de-donnees.png" width="200" alt="Base de données sur Android">
+  &nbsp;
+  <img src="https://raw.githubusercontent.com/nabeiroriviereadriano-design/nothing-notes/captures/android-nouvelle-page.png" width="200" alt="Nouvelle page à partir d'un modèle">
+</p>
 <p align="center"><sub>Captures générées automatiquement à partir du code actuel (branche <code>captures</code>).</sub></p>
 
 ---
@@ -36,6 +48,16 @@ sur votre réseau (Wi-Fi, câble Ethernet ou USB), après une association unique
 par un code à 6 chiffres.
 
 ## Fonctionnalités
+
+**Nouveau en 3.0** (détails : [GUIDE.md](docs/GUIDE.md)) — mise à jour sans
+perte de données, avec sauvegarde vérifiée avant migration ([MIGRATION-3.0.md](docs/MIGRATION-3.0.md))
+- **Pages et sous-pages** : arborescence, fil d'Ariane, récents, déplacement et duplication
+- Éditeur par blocs : menu **`/`**, Titre 3, **blocs repliables**, **glisser-déposer**
+- **Liens entre pages** avec `@`, rétroliens, ouverture rapide `Ctrl+P`
+- **Tâches** : statut, échéance, priorité, vue avec filtres (en retard en rouge)
+- **Bases de données** : propriétés (texte, nombre, date, case, statut, sélection, lien), vues tableau, liste et calendrier, tri, filtres
+- **Modèles** : cours, réunion, projet, journal, fiche de révision… et les vôtres
+- Import Markdown, partage Android, sauvegardes et restauration
 
 **Synchronisation**
 - Directe entre vos appareils sur le même réseau (Wi-Fi, Ethernet, partage de connexion USB), en une à deux secondes
@@ -59,7 +81,7 @@ par un code à 6 chiffres.
 - Tri et filtres
 
 **Windows** : application de bureau native en trois colonnes, redimensionnable,
-raccourcis `Ctrl+N` `Ctrl+S` `Ctrl+F` `Ctrl+B` `Ctrl+I` `Ctrl+U` `Ctrl+Z` `Ctrl+Maj+Z`,
+raccourcis `Ctrl+N` `Ctrl+P` `Ctrl+S` `Ctrl+F` `Ctrl+B` `Ctrl+I` `Ctrl+U` `Ctrl+Z` `Ctrl+Maj+Z`,
 installateur sans droits administrateur, mise à jour et **désinstalleur** propres.
 
 **Android** : interface tactile, ouverture des notes en plein écran, thème clair et sombre.
@@ -84,6 +106,9 @@ compile gratuitement les versions.
 
 | | |
 |---|---|
+| [GUIDE.md](docs/GUIDE.md) | mode d'emploi : pages, tâches, bases de données, modèles, import, sauvegardes |
+| [MIGRATION-3.0.md](docs/MIGRATION-3.0.md) | changements de la base, procédure de migration sûre, retour en arrière |
+| [CHANGELOG.md](docs/CHANGELOG.md) | nouveautés de chaque version |
 | [INSTALLATION.md](docs/INSTALLATION.md) | installation, association, mise à jour, désinstallation, sauvegarde |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | choix techniques, découverte, sécurité de l'association, synchronisation, conflits |
 | [TESTS.md](docs/TESTS.md) | scénarios testés et résultats |

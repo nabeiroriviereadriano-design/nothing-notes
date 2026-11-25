@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:notes_core/notes_core.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -81,6 +82,9 @@ class SettingsScreen extends StatelessWidget {
             ]),
             const SectionLabel('Données'),
             _Card(children: [
+              _Tile(Icons.restore_page_outlined, 'Sauvegardes et restauration',
+                  () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const BackupsScreen()))),
+              _Tile(Icons.upload_file_rounded, 'Importer des fichiers Markdown…', () => _importMarkdown(context)),
               _Tile(Icons.description_outlined, 'Exporter toutes les notes (Markdown)', () => _exportAll(context, 'md')),
               _Tile(Icons.picture_as_pdf_outlined, 'Exporter toutes les notes (PDF)', () => _exportAll(context, 'pdf')),
               _Tile(Icons.delete_sweep_outlined, 'Vider la corbeille', () async {
@@ -120,7 +124,7 @@ class SettingsScreen extends StatelessWidget {
   Future<void> _exportAll(BuildContext context, String format) async {
     final repo = AppScope.read(context).repo;
     if (repo == null) return;
-    final notes = repo.allNotes().where((n) => !n.trashed).toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final notes = repo.allNotes().where((n) => !n.trashed && !n.isTemplate).toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     if (notes.isEmpty) {
       toast(context, 'Aucune note à exporter');
       return;
@@ -134,6 +138,40 @@ class SettingsScreen extends StatelessWidget {
       if (path != null && context.mounted) toast(context, '${notes.length} notes exportées');
     } catch (e) {
       if (context.mounted) toast(context, 'Export impossible : $e');
+    }
+  }
+
+  Future<void> _importMarkdown(BuildContext context) async {
+    final app = AppScope.read(context);
+    final repo = app.repo;
+    if (repo == null) return;
+    final files = await FilePicker.pickFiles(type: FileType.any);
+    var count = 0, skipped = 0;
+    String? last;
+    for (final f in files) {
+      if (!RegExp(r'\.(md|markdown|txt)$', caseSensitive: false).hasMatch(f.name)) {
+        skipped++;
+        continue;
+      }
+      try {
+        final bytes = await f.readAsBytes();
+        final text = utf8.decode(bytes, allowMalformed: true);
+        last = repo.importMarkdown(text, fileName: f.name).id;
+        count++;
+      } catch (_) {
+        skipped++;
+      }
+    }
+    if (!context.mounted) return;
+    if (count == 0) {
+      toast(context, skipped > 0 ? 'Aucun fichier .md, .markdown ou .txt importé' : 'Aucun fichier choisi');
+      return;
+    }
+    toast(context, '$count page(s) importée(s)${skipped > 0 ? ' · $skipped fichier(s) ignoré(s)' : ''}');
+    if (last != null) {
+      app.showView(NavView.all);
+      app.select(last);
+      Navigator.of(context).pop();
     }
   }
 
@@ -185,4 +223,105 @@ class _Tile extends StatelessWidget {
         trailing: Icon(Icons.chevron_right_rounded, color: context.nn.mid),
         onTap: onTap,
       );
+}
+
+
+/// Sauvegardes de la base : création manuelle, liste, restauration.
+class BackupsScreen extends StatefulWidget {
+  const BackupsScreen({super.key});
+  @override
+  State<BackupsScreen> createState() => _BackupsScreenState();
+}
+
+class _BackupsScreenState extends State<BackupsScreen> {
+  String _label(String l) => switch (l) {
+        'manuelle' => 'Sauvegarde manuelle',
+        'avant-restauration' => 'État remplacé lors d\'une restauration',
+        _ when l.endsWith('avant-migration') => 'Avant la mise à jour (version ${l.replaceAll(RegExp(r'[^0-9]'), '')} des données)',
+        _ => l,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    final nn = context.nn;
+    final list = app.ready && app.repo != null ? app.backups() : const <BackupInfo>[];
+    return Scaffold(
+      appBar: AppBar(title: const Text('Sauvegardes')),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: ListView(padding: const EdgeInsets.fromLTRB(20, 0, 20, 40), children: [
+            Text(
+              'Une sauvegarde complète et vérifiée est créée automatiquement avant chaque mise à jour des données. '
+              'Vous pouvez aussi en créer une à tout moment. Restaurer remplace toutes les notes de cet appareil par '
+              'celles de la sauvegarde ; l\'état actuel est d\'abord sauvegardé lui aussi.',
+              style: TextStyle(color: nn.mid, fontSize: 13, height: 1.45),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              key: const ValueKey('backup-now'),
+              onPressed: () {
+                try {
+                  final b = app.backupNow();
+                  toast(context, 'Sauvegarde créée (${formatBytes(b.sizeBytes)})');
+                } catch (e) {
+                  toast(context, 'Sauvegarde impossible : $e');
+                }
+                setState(() {});
+              },
+              icon: const Icon(Icons.save_alt_rounded),
+              label: const Text('Créer une sauvegarde maintenant'),
+            ),
+            const SectionLabel('Sauvegardes disponibles'),
+            if (list.isEmpty) Text('Aucune sauvegarde pour le moment.', style: TextStyle(color: nn.mid)),
+            for (final b in list)
+              Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: nn.card,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: nn.line),
+                ),
+                child: ListTile(
+                  leading: Icon(b.label.endsWith('avant-migration') ? Icons.verified_outlined : Icons.inventory_outlined),
+                  title: Text(_label(b.label)),
+                  subtitle: Text('${formatDate(b.createdAt.toUtc())} · ${formatBytes(b.sizeBytes)}',
+                      style: TextStyle(color: nn.mid, fontSize: 12.5)),
+                  trailing: TextButton(onPressed: () => _restore(context, app, b), child: const Text('Restaurer')),
+                ),
+              ),
+            const SizedBox(height: 12),
+            SelectableText('Dossier : ${app.safety.backupsDir}', style: TextStyle(color: nn.mid, fontSize: 11.5)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _restore(BuildContext context, AppController app, BackupInfo b) async {
+    String content;
+    try {
+      content = app.safety.inspect(b.path).describe();
+    } catch (e) {
+      toast(context, 'Sauvegarde illisible : $e');
+      return;
+    }
+    final ok = await confirm(context,
+        title: 'Restaurer cette sauvegarde ?',
+        message: 'Elle contient : $content.\n\nToutes les notes actuelles de cet appareil seront remplacées. '
+            'L\'état actuel est sauvegardé avant, vous pourrez donc revenir en arrière.\n\n'
+            'Si des appareils sont associés, la synchronisation pourra ensuite ramener ici les modifications '
+            'plus récentes qu\'ils possèdent.',
+        ok: 'Restaurer',
+        danger: true);
+    if (!ok || !context.mounted) return;
+    final nav = Navigator.of(context);
+    nav.popUntil((r) => r.isFirst);
+    try {
+      await app.restoreBackup(b);
+    } catch (e) {
+      app.notice.value = 'Restauration impossible : $e';
+    }
+  }
 }

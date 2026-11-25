@@ -68,7 +68,11 @@ class InlineController extends TextEditingController {
           backgroundColor: n.line.withValues(alpha: 0.6),
         );
       }
-      if (t.link != null) s = s.copyWith(color: NColors.red);
+      if (t.link != null) {
+        // Lien interne : texte normal souligné de rouge ; lien web : texte rouge lisible.
+        final page = t.link!.startsWith(kPageLinkPrefix);
+        s = s.copyWith(color: page ? n.fg : redText(context), fontWeight: page ? FontWeight.w600 : null);
+      }
       if (t.marker) {
         s = _revealMarkers
             ? s.copyWith(color: n.mid.withValues(alpha: 0.7), fontWeight: FontWeight.w400, decoration: TextDecoration.none)

@@ -8,6 +8,7 @@ import 'package:nothing_notes/screens/home_shell.dart';
 import 'package:nothing_notes/services/update_checker.dart';
 import 'package:nothing_notes/state/app_controller.dart';
 import 'package:nothing_notes/theme.dart';
+import 'package:nothing_notes/widgets/note_list.dart';
 
 ({AppController app, NotesRepository repo}) _setup() {
   final store = LocalStore.inMemory();
@@ -111,6 +112,135 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Idées'), findsOneWidget);
     expect(find.text('Projet de jeu'), findsNothing);
+  });
+
+  testWidgets('pages : sous-pages, fil d\'Ariane et rétroliens', (tester) async {
+    final s = _setup();
+    final parent = s.repo.createNote(title: 'Projet atelier');
+    final child = s.repo.createSubPage(parent.id, title: 'Câblage');
+    s.repo.createNote(title: 'Journal', blocks: [Block(text: 'voir ${pageLink('Câblage', child.id)}')]);
+    s.app.selectedNoteId = child.id;
+    _size(tester, const Size(1440, 900));
+    await tester.pumpWidget(_wrap(s.app));
+    await tester.pumpAndSettle();
+
+    // Fil d'Ariane et « Mentionnée dans »
+    expect(find.descendant(of: find.byType(NoteEditor), matching: find.text('Projet atelier')), findsOneWidget);
+    expect(find.text('MENTIONNÉE DANS'), findsOneWidget);
+    expect(find.descendant(of: find.byType(NoteEditor), matching: find.text('Journal')), findsOneWidget);
+    // La sous-page n'encombre pas la liste principale
+    expect(find.descendant(of: find.byType(NoteCard), matching: find.text('Câblage')), findsNothing);
+
+    // Retour à la page parente par le fil d'Ariane, puis ouverture de la sous-page depuis la section
+    await tester.tap(find.descendant(of: find.byType(NoteEditor), matching: find.text('Projet atelier')));
+    await tester.pumpAndSettle();
+    expect(s.app.selectedNoteId, parent.id);
+    expect(find.text('SOUS-PAGES'), findsOneWidget);
+    await tester.tap(find.descendant(of: find.byType(NoteEditor), matching: find.text('Câblage')));
+    await tester.pumpAndSettle();
+    expect(s.app.selectedNoteId, child.id);
+    tester.state<NoteEditorState>(find.byType(NoteEditor)).flush();
+  });
+
+  testWidgets('« / » ouvre le menu d\'insertion et crée un Titre 3', (tester) async {
+    final s = _setup();
+    final n = s.repo.createNote(title: 'Page', blocks: [Block(text: '')]);
+    s.app.selectedNoteId = n.id;
+    _size(tester, const Size(1440, 900));
+    await tester.pumpWidget(_wrap(s.app));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextField, 'Page'));
+    await tester.pump();
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle();
+    await tester.enterText(_focusedField, '/');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('insert-h3')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('insert-h3')));
+    await tester.pumpAndSettle();
+    final editor = tester.state<NoteEditorState>(find.byType(NoteEditor));
+    editor.flush();
+    expect(s.repo.note(n.id)!.blocks.first.type, BlockType.heading3);
+    expect(s.repo.note(n.id)!.blocks.first.text, '', reason: 'le « / » est retiré');
+  });
+
+  testWidgets('l\'éditeur ouvert ne réécrit jamais un champ modifié ailleurs (parent, icône, propriétés)', (tester) async {
+    final s = _setup();
+    final parent = s.repo.createNote(title: 'Parent');
+    final n = s.repo.createNote(title: 'Enfant', blocks: [Block(text: 'texte')]);
+    s.app.selectedNoteId = n.id;
+    _size(tester, const Size(1440, 900));
+    await tester.pumpWidget(_wrap(s.app));
+    await tester.pumpAndSettle();
+
+    // Modifications faites hors de l'éditeur (menu, autre appareil…)
+    s.repo.movePage(n.id, parent.id);
+    s.repo.setIcon(n.id, '🎯');
+    s.repo.setProp(n.id, 'p1', 'valeur');
+    await tester.pumpAndSettle();
+
+    // Puis saisie dans l'éditeur
+    await tester.enterText(find.widgetWithText(TextField, 'Enfant'), 'Enfant modifié');
+    await tester.pumpAndSettle();
+    tester.state<NoteEditorState>(find.byType(NoteEditor)).flush();
+    final saved = s.repo.note(n.id)!;
+    expect(saved.title, 'Enfant modifié');
+    expect(saved.parentId, parent.id);
+    expect(saved.icon, '🎯');
+    expect(saved.props['p1'], 'valeur');
+  });
+
+  testWidgets('base de données : tableau, nouvelle entrée et ses propriétés', (tester) async {
+    final s = _setup();
+    final db = s.repo.createDatabase(title: 'Révisions');
+    final st = s.repo.schemaOf(db.id).props.first;
+    s.repo.addEntry(db.id, title: 'Maths', props: {st.id: st.options[1].id});
+    s.app.selectedNoteId = db.id;
+    _size(tester, const Size(1440, 900));
+    await tester.pumpWidget(_wrap(s.app));
+    await tester.pumpAndSettle();
+    expect(find.text('Maths'), findsWidgets);
+    expect(find.text('En cours'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('db-add-entry')));
+    await tester.pumpAndSettle();
+    final entry = s.repo.note(s.app.selectedNoteId!)!;
+    expect(entry.parentId, db.id);
+    expect(find.byKey(ValueKey('prop-${st.id}')), findsOneWidget, reason: 'propriétés affichées en tête de l\'entrée');
+    tester.state<NoteEditorState>(find.byType(NoteEditor)).flush();
+  });
+
+  testWidgets('tâches : vue dédiée et filtres', (tester) async {
+    final s = _setup();
+    final a = Block(type: BlockType.todo, text: 'Commander le variateur')..task = TaskInfo(status: TaskStatus.doing, priority: 3);
+    final b = Block(type: BlockType.todo, text: 'Mettre à jour le schéma', checked: true)..task = TaskInfo(status: TaskStatus.done);
+    final c = Block(type: BlockType.todo, text: 'Case non suivie');
+    s.repo.createNote(title: 'Atelier', blocks: [a, b, c]);
+    s.app.view = NavView.tasks;
+    _size(tester, const Size(1440, 900));
+    await tester.pumpWidget(_wrap(s.app));
+    await tester.pumpAndSettle();
+    expect(find.text('Commander le variateur'), findsOneWidget);
+    expect(find.text('Mettre à jour le schéma'), findsNothing, reason: 'filtre par défaut : tâches ouvertes');
+    expect(find.text('Case non suivie'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('task-filter-done')));
+    await tester.pumpAndSettle();
+    expect(find.text('Mettre à jour le schéma'), findsOneWidget);
+    expect(find.text('Commander le variateur'), findsNothing);
+  });
+
+  testWidgets('téléphone : nouvelle page à partir d\'un modèle', (tester) async {
+    final s = _setup();
+    _size(tester, const Size(400, 860));
+    await tester.pumpWidget(_wrap(s.app));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(FloatingActionButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('new-tpl:builtin:meeting')));
+    await tester.pumpAndSettle();
+    final n = s.repo.note(s.app.selectedNoteId!)!;
+    expect(n.title, startsWith('Réunion du'));
+    expect(n.blocks.first.text, 'Participants');
+    tester.state<NoteEditorState>(find.byType(NoteEditor)).flush();
   });
 
   test('comparaison de versions pour les mises à jour', () {

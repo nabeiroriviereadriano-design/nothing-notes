@@ -5,6 +5,7 @@ import '../state/app_controller.dart';
 import '../theme.dart';
 import 'common.dart';
 import 'dialogs.dart';
+import 'pages_ui.dart';
 
 /// Barre de recherche avec raccourci Ctrl+F.
 class SearchField extends StatefulWidget {
@@ -171,6 +172,7 @@ class NoteList extends StatelessWidget {
     final app = AppScope.of(context);
     final notes = app.visibleNotes();
     final tags = {for (final t in app.repo!.tags()) t.id: t};
+    final subCounts = app.subPageCounts();
     if (notes.isEmpty) {
       if (app.query.isNotEmpty) {
         return EmptyState(icon: Icons.search_off_rounded, title: 'Aucun résultat', subtitle: '« ${app.query} »');
@@ -180,6 +182,11 @@ class NoteList extends StatelessWidget {
         NavView.archive => const EmptyState(icon: Icons.inventory_2_outlined, title: 'Aucune note archivée'),
         NavView.favorites => const EmptyState(
             icon: Icons.star_outline_rounded, title: 'Aucun favori', subtitle: 'Touchez l\'étoile d\'une note pour la retrouver ici.'),
+        NavView.recent => const EmptyState(icon: Icons.history_rounded, title: 'Aucune page récente'),
+        NavView.templates => const EmptyState(
+            icon: Icons.dashboard_customize_outlined,
+            title: 'Aucun modèle personnalisé',
+            subtitle: 'Les modèles intégrés sont proposés par le bouton +. Créez le vôtre avec + ici, ou « Enregistrer comme modèle » depuis une page.'),
         _ => const EmptyState(
             icon: Icons.edit_note_rounded, title: 'Aucune note', subtitle: 'Créez votre première note avec le bouton +.'),
       };
@@ -216,6 +223,7 @@ class NoteList extends StatelessWidget {
             key: ValueKey(notes[i].id),
             note: notes[i],
             tags: tags,
+            subPages: subCounts[notes[i].id] ?? 0,
             selected: notes[i].id == app.selectedNoteId,
             onTap: () => onOpen(notes[i]),
           ),
@@ -226,8 +234,9 @@ class NoteList extends StatelessWidget {
 }
 
 class NoteCard extends StatefulWidget {
-  const NoteCard({super.key, required this.note, required this.tags, required this.selected, required this.onTap});
+  const NoteCard({super.key, required this.note, required this.tags, required this.selected, required this.onTap, this.subPages = 0});
   final Note note;
+  final int subPages;
   final Map<String, Tag> tags;
   final bool selected;
   final VoidCallback onTap;
@@ -277,7 +286,9 @@ class _NoteCardState extends State<NoteCard> {
                     child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Padding(
                         padding: const EdgeInsets.only(top: 2, right: 14),
-                        child: Icon(noteIcon(n), size: 26, color: fg),
+                        child: n.icon != null || n.isDatabase || n.isTemplate
+                            ? PageIcon(note: n, size: 24, color: fg)
+                            : Icon(noteIcon(n), size: 26, color: fg),
                       ),
                       Expanded(
                         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -319,6 +330,15 @@ class _NoteCardState extends State<NoteCard> {
                                   style: TextStyle(fontSize: 11.5, color: nn.mid)),
                             ),
                             const SizedBox(width: 8),
+                            if (widget.subPages > 0) ...[
+                              Icon(Icons.subdirectory_arrow_right_rounded, size: 13, color: nn.mid),
+                              Text('${widget.subPages}', style: TextStyle(fontSize: 11.5, color: nn.mid)),
+                              const SizedBox(width: 8),
+                            ],
+                            if (n.isDatabase) ...[
+                              Text('BASE', style: TextStyle(fontFamily: kFontMono, fontSize: 10, letterSpacing: 1.2, color: nn.mid)),
+                              const SizedBox(width: 8),
+                            ],
                             for (final t in n.tags.take(3))
                               if (widget.tags[t] != null)
                                 Padding(
@@ -354,7 +374,15 @@ class _NoteCardState extends State<NoteCard> {
               onTap: () => Navigator.pop(c, 'fav'),
             ),
             ListTile(leading: const Icon(Icons.sell_outlined), title: const Text('Étiquettes…'), onTap: () => Navigator.pop(c, 'tags')),
-            ListTile(leading: const Icon(Icons.folder_outlined), title: const Text('Déplacer…'), onTap: () => Navigator.pop(c, 'move')),
+            ListTile(leading: const Icon(Icons.folder_outlined), title: const Text('Déplacer vers un dossier…'), onTap: () => Navigator.pop(c, 'move')),
+            if (!n.isTemplate) ...[
+              ListTile(
+                  leading: const Icon(Icons.account_tree_outlined),
+                  title: const Text('Déplacer dans une page…'),
+                  onTap: () => Navigator.pop(c, 'movepage')),
+              ListTile(leading: const Icon(Icons.note_add_outlined), title: const Text('Nouvelle sous-page'), onTap: () => Navigator.pop(c, 'sub')),
+            ],
+            ListTile(leading: const Icon(Icons.copy_all_rounded), title: const Text('Dupliquer'), onTap: () => Navigator.pop(c, 'dup')),
             ListTile(
               leading: const Icon(Icons.inventory_2_outlined),
               title: Text(n.archived ? 'Désarchiver' : 'Archiver'),
@@ -385,6 +413,20 @@ class _NoteCardState extends State<NoteCard> {
       case 'move':
         final (ok, folder) = await pickFolder(context, repo, current: n.folderId);
         if (ok) repo.moveToFolder(n.id, folder);
+      case 'movepage':
+        final target = await pickPage(
+          context,
+          title: 'Déplacer « ${n.title.isEmpty ? 'Sans titre' : n.title} » dans…',
+          excludeId: n.id,
+          allow: (p) => repo.canMoveUnder(n.id, p.id) && !p.isTemplate,
+          rootLabel: n.parentId == null ? null : 'Premier niveau (aucune page parente)',
+        );
+        if (target != null) repo.movePage(n.id, identical(target, kRootChoice) ? null : target.id);
+      case 'sub':
+        await showNewPageSheet(context, parentId: n.id);
+      case 'dup':
+        final copy = repo.duplicateNote(n.id);
+        app.select(copy.id);
       case 'archive':
         repo.setArchived(n.id, !n.archived);
       case 'trash':

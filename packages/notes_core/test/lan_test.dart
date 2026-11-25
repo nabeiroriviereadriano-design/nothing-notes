@@ -14,8 +14,9 @@ import 'lan_harness.dart';
 /// locale, bases SQLite séparées, appairage par code.
 void main() {
   final devices = <Device>[];
-  Future<Device> device(String name, {int udpPort = 0, List<(String, int)> udpTargets = const []}) async {
-    final d = await Device.create(name, udpPort: udpPort, udpTargets: udpTargets);
+  Future<Device> device(String name,
+      {int udpPort = 0, List<(String, int)> udpTargets = const [], int protocolVersion = kProtocolVersion}) async {
+    final d = await Device.create(name, udpPort: udpPort, udpTargets: udpTargets, protocolVersion: protocolVersion);
     devices.add(d);
     return d;
   }
@@ -426,6 +427,86 @@ void main() {
       await pc.goOnline();
       await waitFor(() => pc.maybeByTitle('En attente') != null, 'envoyée au retour');
       await waitFor(() => phone.node.status.state == SyncState.synced, 'synchronisé à nouveau');
+    });
+  });
+
+  group('Version 3 : pages, bases, tâches entre appareils', () {
+    test('appareil resté en version 2.0 : association refusée, aucune donnée échangée', () async {
+      final pc = await device('PC'), old = await device('Ancien', protocolVersion: 1);
+      pc.repo.createNote(title: 'Ne doit pas partir');
+      final code = pc.node.startPairing();
+      await expectLater(
+        old.node.joinWithCode(code, address: pc.address),
+        throwsA(isA<PairingError>().having((e) => e.code, 'code', 'version')),
+      );
+      expect(old.maybeByTitle('Ne doit pas partir'), isNull);
+    });
+
+    test('appareil associé puis revenu à une ancienne version : synchro suspendue avec un message clair', () async {
+      final pc = await device('PC'), phone = await device('Téléphone');
+      await phone.pairWith(pc);
+      await waitFor(() => phone.node.status.state == SyncState.synced, 'synchronisé');
+      phone.protocolVersion = 1;
+      await phone.restart();
+      pc.repo.createNote(title: 'Après la mise à jour');
+      await waitFor(() => pc.node.status.state == SyncState.error, 'erreur de version affichée sur le PC');
+      expect(pc.node.status.message, contains('Mettez à jour Nothing Notes'));
+      expect(pc.node.peers.single.outdated, isTrue);
+      await Future<void>.delayed(const Duration(seconds: 1));
+      expect(phone.maybeByTitle('Après la mise à jour'), isNull, reason: 'rien n\'est envoyé à une version qui perdrait des champs');
+      // Retour à la bonne version : tout reprend.
+      phone.protocolVersion = kProtocolVersion;
+      await phone.restart();
+      await waitFor(() => phone.maybeByTitle('Après la mise à jour') != null, 'synchro reprise');
+      expect(pc.node.peers.single.outdated, isFalse);
+    });
+
+    test('sous-pages, base de données, tâches et blocs repliables arrivent intacts', () async {
+      final pc = await device('PC'), phone = await device('Téléphone');
+      await phone.pairWith(pc);
+      final parent = pc.repo.createNote(title: 'Projet');
+      final child = pc.repo.createSubPage(parent.id, title: 'Étape 1');
+      final db = pc.repo.createDatabase(title: 'Suivi', parentId: parent.id);
+      final schema = pc.repo.schemaOf(db.id);
+      final entry = pc.repo.addEntry(db.id, title: 'Entrée A', props: {schema.props[0].id: schema.props[0].options[1].id});
+      final todo = Block(type: BlockType.todo, text: 'Tâche suivie');
+      final cur = pc.repo.note(child.id)!..blocks = [todo, Block(type: BlockType.toggle, text: 'Résumé', extra: {'body': 'caché'})];
+      pc.repo.saveNote(cur);
+      pc.repo.updateTask(child.id, todo.id, status: TaskStatus.doing, due: DateTime(2026, 12, 1), priority: 3);
+      await waitConverged([pc, phone]);
+
+      final c2 = phone.repo.note(child.id)!;
+      expect(c2.parentId, parent.id);
+      expect(c2.blocks[0].task!.status, TaskStatus.doing);
+      expect(c2.blocks[0].task!.priority, 3);
+      expect(c2.blocks[0].task!.due, DateTime(2026, 12, 1));
+      expect(c2.blocks[1].body, 'caché');
+      expect(phone.repo.note(db.id)!.isDatabase, isTrue);
+      expect(phone.repo.schemaOf(db.id).props.map((p) => p.name), ['Statut', 'Date']);
+      expect(phone.repo.note(entry.id)!.props[schema.props[0].id], schema.props[0].options[1].id);
+      expect(phone.repo.ancestorsOf(child.id).map((n) => n.title), ['Projet']);
+    });
+
+    test('propriétés différentes modifiées sur deux appareils : les deux valeurs sont gardées', () async {
+      final pc = await device('PC'), phone = await device('Téléphone');
+      await phone.pairWith(pc);
+      final db = pc.repo.createDatabase(title: 'Base');
+      final s = pc.repo.schemaOf(db.id);
+      final e = pc.repo.addEntry(db.id, title: 'E');
+      await waitConverged([pc, phone]);
+      await pc.goOffline();
+      await phone.goOffline();
+      pc.repo.setProp(e.id, s.props[0].id, s.props[0].options[2].id);
+      phone.repo.setProp(e.id, s.props[1].id, '2026-12-24');
+      await pc.goOnline();
+      await phone.goOnline();
+      await waitConverged([pc, phone]);
+      for (final d in [pc, phone]) {
+        final n = d.repo.note(e.id)!;
+        expect(n.props[s.props[0].id], s.props[0].options[2].id);
+        expect(n.props[s.props[1].id], '2026-12-24');
+        expect(n.hasConflict, isFalse);
+      }
     });
   });
 }

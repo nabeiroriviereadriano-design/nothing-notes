@@ -307,3 +307,31 @@ class EmptyState extends StatelessWidget {
         ),
       );
 }
+
+/// Icône d'une page : emoji choisi, sinon un pictogramme selon la sorte de page.
+class PageIcon extends StatelessWidget {
+  const PageIcon({super.key, required this.note, this.size = 18, this.color});
+  final Note note;
+  final double size;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = note.icon;
+    if (icon != null && icon.isNotEmpty) {
+      return SizedBox(
+        width: size + 2,
+        child: Text(icon, textAlign: TextAlign.center, style: TextStyle(fontSize: size * 0.95, height: 1.1)),
+      );
+    }
+    return Icon(
+      note.isDatabase
+          ? Icons.table_chart_outlined
+          : note.isTemplate
+              ? Icons.dashboard_customize_outlined
+              : Icons.description_outlined,
+      size: size,
+      color: color ?? context.nn.mid,
+    );
+  }
+}

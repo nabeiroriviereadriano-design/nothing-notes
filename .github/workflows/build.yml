@@ -2,7 +2,7 @@ name: Build Android + Windows
 
 on:
   push:
-    branches: [main]
+    branches: [main, notion]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -58,13 +58,14 @@ jobs:
           path: app/screenshot_test/goldens/*.png
           if-no-files-found: warn
       - name: Publier les captures (branche « captures »)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/notion')
         working-directory: app/screenshot_test/goldens
         run: |
-          git init -q -b captures
+          B=captures; [ "$GITHUB_REF" = "refs/heads/main" ] || B=captures-preview
+          git init -q -b "$B"
           git add *.png
           git -c user.name="github-actions" -c user.email="actions@github.com" commit -qm "Captures d'écran (${GITHUB_SHA::7})"
-          git push -fq "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" captures
+          git push -fq "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "$B"
       - name: Résumé
         if: always()
         run: |
