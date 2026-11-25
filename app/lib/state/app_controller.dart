@@ -8,11 +8,12 @@ import 'package:notes_core/notes_core.dart';
 import 'package:path/path.dart' as p;
 
 import '../services/platform_paths.dart';
+import '../services/share_bridge.dart';
 
-const kAppVersion = String.fromEnvironment('APP_VERSION', defaultValue: '2.0.0');
+const kAppVersion = String.fromEnvironment('APP_VERSION', defaultValue: '3.0.0');
 const kGithubRepo = 'nabeiroriviereadriano-design/nothing-notes';
 
-enum NavView { all, favorites, folder, tag, archive, trash }
+enum NavView { all, favorites, folder, tag, archive, trash, recent, tasks, templates }
 
 enum SortMode { modified, created, title }
 
@@ -63,6 +64,12 @@ class AppController extends ChangeNotifier {
   bool ready = false;
   String? fatalError;
 
+  /// Chemin de la sauvegarde à proposer quand la migration a été arrêtée.
+  String? fatalBackupPath;
+
+  late DataSafety safety;
+  String get dbPath => p.join(dataDir.path, 'notes.db');
+
   LocalStore? store;
   NotesRepository? repo;
   LanNode? node;
@@ -84,6 +91,9 @@ class AppController extends ChangeNotifier {
   NoteFilter filter = NoteFilter.none;
   String? selectedNoteId;
 
+  /// Message court à afficher (ex. : page créée depuis un partage).
+  final notice = ValueNotifier<String?>(null);
+
   /// Incrémenté quand l'utilisateur demande le focus sur la recherche (Ctrl+F).
   final searchFocusRequest = ValueNotifier<int>(0);
 
@@ -98,7 +108,10 @@ class AppController extends ChangeNotifier {
         _ => ThemeMode.dark,
       };
       sort = SortMode.values.firstWhere((s) => s.name == settings.get<String>('sort'), orElse: () => SortMode.modified);
-      final s = LocalStore.open(p.join(dataDir.path, 'notes.db'));
+      safety = DataSafety(p.join(dataDir.path, 'backups'));
+      // Sauvegarde vérifiée avant toute migration, vérification après,
+      // remise en place automatique au moindre écart.
+      final s = safety.openStore(dbPath);
       if (s.getMeta('device_name') == null) s.deviceName = _defaultDeviceName();
       final files = p.join(dataDir.path, 'files');
       store = s;
@@ -119,11 +132,31 @@ class AppController extends ChangeNotifier {
       syncStatus = n.status;
       // Retour au premier plan (Android) : reconnexion immédiate.
       _lifecycle = AppLifecycleListener(onResume: () => unawaited(syncNow()));
+    } on MigrationAborted catch (e) {
+      fatalError = 'La mise à jour de la base de notes a été arrêtée par sécurité.\n\n${e.message}\n\n'
+          'Vos notes n\'ont pas été modifiées.';
+      fatalBackupPath = e.backupPath;
     } catch (e) {
       fatalError = e.toString();
     }
     ready = true;
     notifyListeners();
+    if (repo != null && !_shareListening) {
+      _shareListening = true;
+      unawaited(ShareBridge.listen(importShared));
+    }
+  }
+
+  bool _shareListening = false;
+
+  /// Texte ou fichier Markdown reçu d'une autre application : nouvelle page.
+  void importShared(String text, String? subject, bool fromFile) {
+    final r = repo;
+    if (r == null) return;
+    final n = fromFile ? r.importMarkdown(text, fileName: subject ?? '') : r.importSharedText(text, subject: subject);
+    view = NavView.all;
+    select(n.id);
+    notice.value = 'Page créée à partir du partage';
   }
 
   bool _notifyScheduled = false;
@@ -193,23 +226,81 @@ class AppController extends ChangeNotifier {
 
   void select(String? noteId) {
     selectedNoteId = noteId;
+    if (noteId != null) repo?.markOpened(noteId);
     notifyListeners();
+  }
+
+  /// Ouvre une page (lien interne, fil d'Ariane, sous-page…) sans changer de vue
+  /// si elle y est visible.
+  void openPage(String id) {
+    final n = repo?.note(id);
+    if (n == null) return;
+    if (n.trashed && view != NavView.trash) view = NavView.all;
+    if (n.isTemplate) view = NavView.templates;
+    select(id);
+  }
+
+  // ---------------------------------------------------------------- sauvegardes
+  List<BackupInfo> backups() => safety.list();
+
+  BackupInfo backupNow() => safety.backupNow(store!);
+
+  /// Remplace toutes les données par une sauvegarde : la base est fermée,
+  /// l'état actuel est lui-même sauvegardé, puis l'application redémarre
+  /// sur la sauvegarde.
+  Future<void> restoreBackup(BackupInfo b) async {
+    ready = false;
+    notifyListeners();
+    _lifecycle?.dispose();
+    await _storeSub?.cancel();
+    await _statusSub?.cancel();
+    await node?.dispose();
+    store?.close();
+    store = null;
+    repo = null;
+    node = null;
+    selectedNoteId = null;
+    try {
+      safety.restore(b.path, dbPath);
+    } finally {
+      await init();
+    }
   }
 
   void requestSearchFocus() => searchFocusRequest.value++;
 
-  Note newNote() {
+  Note newNote({PageTemplate? template, String? parentId}) {
     final r = repo!;
-    final n = r.createNote(
-      folderId: view == NavView.folder ? folderId : null,
-      tags: view == NavView.tag && tagId != null ? [tagId!] : null,
-    );
-    if (view == NavView.favorites) r.setFavorite(n.id, true);
-    if (view == NavView.trash || view == NavView.archive) showView(NavView.all);
-    selectedNoteId = n.id;
-    notifyListeners();
+    final folder = view == NavView.folder ? folderId : null;
+    final Note n;
+    if (view == NavView.templates && template == null && parentId == null) {
+      n = r.createNote(title: 'Nouveau modèle', kind: PageKind.template);
+    } else if (template != null) {
+      n = r.createFromTemplate(template, parentId: parentId, folderId: folder);
+    } else {
+      n = r.createNote(folderId: parentId == null ? folder : r.note(parentId)?.folderId, parentId: parentId);
+    }
+    if (view == NavView.tag && tagId != null && parentId == null) r.setTags(n.id, [tagId!]);
+    if (view == NavView.favorites && parentId == null) r.setFavorite(n.id, true);
+    if (const {NavView.trash, NavView.archive, NavView.recent, NavView.tasks}.contains(view)) {
+      view = NavView.all;
+    }
+    select(n.id);
     return n;
   }
+
+  Note newDatabase({String? parentId}) {
+    final r = repo!;
+    final n = r.createDatabase(parentId: parentId, folderId: view == NavView.folder ? folderId : null);
+    if (const {NavView.trash, NavView.archive, NavView.recent, NavView.tasks, NavView.templates}.contains(view)) {
+      view = NavView.all;
+    }
+    select(n.id);
+    return n;
+  }
+
+  /// Ouverture rapide (Ctrl+P) : pages par titre.
+  List<Note> quickFind(String q) => repo?.findPages(q, limit: 20) ?? const [];
 
   String get viewTitle {
     switch (view) {
@@ -225,7 +316,32 @@ class AppController extends ChangeNotifier {
         return repo?.folders().where((f) => f.id == folderId).firstOrNull?.name ?? 'Dossier';
       case NavView.tag:
         return repo?.tags().where((t) => t.id == tagId).firstOrNull?.name ?? 'Étiquette';
+      case NavView.recent:
+        return 'Récents';
+      case NavView.tasks:
+        return 'Tâches';
+      case NavView.templates:
+        return 'Modèles';
     }
+  }
+
+  /// Dans « Toutes les notes » et les dossiers, seules les pages de premier
+  /// niveau sont listées (les sous-pages s'ouvrent depuis leur page). Une
+  /// sous-page dont le parent est à la corbeille ou introuvable reste visible.
+  bool _isRoot(Note n, Map<String, Note> byId) {
+    final pid = n.parentId;
+    if (pid == null) return true;
+    final parent = byId[pid];
+    return parent == null || parent.trashed || parent.purged || parent.isTemplate;
+  }
+
+  /// Nombre de sous-pages directes (hors corbeille).
+  Map<String, int> subPageCounts() {
+    final out = <String, int>{};
+    for (final n in repo?.allNotes() ?? const <Note>[]) {
+      if (n.parentId != null && !n.trashed && !n.isTemplate) out[n.parentId!] = (out[n.parentId!] ?? 0) + 1;
+    }
+    return out;
   }
 
   /// Notes affichées dans la liste selon la vue, la recherche, le filtre et le tri.
@@ -233,23 +349,39 @@ class AppController extends ChangeNotifier {
     final r = repo;
     if (r == null) return [];
     final searching = query.trim().isNotEmpty;
-    var notes = searching ? r.search(query) : r.allNotes();
+    final everything = r.allNotes();
+    final byId = {for (final n in everything) n.id: n};
+    if (view == NavView.templates) {
+      return r.customTemplateNotes()..addAll(everything.where((n) => n.isTemplate && !n.trashed && n.templateFor != null));
+    }
+    if (view == NavView.recent && !searching) return r.recentPages(limit: 30);
+    var notes = searching ? r.search(query) : everything;
     Set<String>? folderIds;
     if (view == NavView.folder && folderId != null) folderIds = r.folderSubtree(folderId!);
+    // En recherche, toutes les pages correspondantes sont montrées (sous-pages comprises).
+    bool root(Note n) => searching || _isRoot(n, byId);
     notes = notes.where((n) {
+      if (n.isTemplate) return false;
       switch (view) {
         case NavView.all:
-          return !n.trashed && !n.archived;
+        case NavView.tasks:
+          return !n.trashed && !n.archived && root(n);
+        case NavView.recent:
+          return !n.trashed;
         case NavView.favorites:
           return n.favorite && !n.trashed;
         case NavView.folder:
-          return !n.trashed && !n.archived && folderIds!.contains(n.folderId);
+          return !n.trashed && !n.archived && folderIds!.contains(n.folderId) && root(n);
         case NavView.tag:
           return !n.trashed && n.tags.contains(tagId);
         case NavView.archive:
           return n.archived && !n.trashed;
         case NavView.trash:
-          return n.trashed;
+          // Une sous-page partie à la corbeille avec sa page n'est listée qu'une fois (sous sa page).
+          final parent = n.parentId == null ? null : byId[n.parentId!];
+          return n.trashed && !(parent != null && parent.trashed && parent.trashedAt == n.trashedAt);
+        case NavView.templates:
+          return false;
       }
     }).where((n) {
       switch (filter) {
@@ -281,12 +413,17 @@ class AppController extends ChangeNotifier {
     return notes;
   }
 
-  ({int all, int favorites, int archive, int trash, Map<String, int> tags, Map<String, int> folders}) counts() {
+  ({int all, int favorites, int archive, int trash, Map<String, int> tags, Map<String, int> folders, int tasks, int templates})
+      counts() {
     final r = repo;
-    if (r == null) return (all: 0, favorites: 0, archive: 0, trash: 0, tags: {}, folders: {});
-    var all = 0, fav = 0, arch = 0, trash = 0;
+    if (r == null) return (all: 0, favorites: 0, archive: 0, trash: 0, tags: {}, folders: {}, tasks: 0, templates: 0);
+    var all = 0, fav = 0, arch = 0, trash = 0, templates = 0;
     final tags = <String, int>{}, folders = <String, int>{};
     for (final n in r.allNotes()) {
+      if (n.isTemplate) {
+        if (!n.trashed) templates++;
+        continue;
+      }
       if (n.trashed) {
         trash++;
         continue;
@@ -302,7 +439,16 @@ class AppController extends ChangeNotifier {
       }
       if (n.folderId != null) folders[n.folderId!] = (folders[n.folderId!] ?? 0) + 1;
     }
-    return (all: all, favorites: fav, archive: arch, trash: trash, tags: tags, folders: folders);
+    return (
+      all: all,
+      favorites: fav,
+      archive: arch,
+      trash: trash,
+      tags: tags,
+      folders: folders,
+      tasks: r.tasks().length,
+      templates: templates,
+    );
   }
 
   @override

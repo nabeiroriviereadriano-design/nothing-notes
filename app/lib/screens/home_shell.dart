@@ -7,7 +7,9 @@ import '../state/app_controller.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/note_list.dart';
+import '../widgets/pages_ui.dart';
 import '../widgets/sidebar.dart';
+import '../widgets/tasks_pane.dart';
 import 'devices_screen.dart';
 import 'settings_screen.dart';
 
@@ -25,10 +27,55 @@ class _HomeShellState extends State<HomeShell> {
   final _editorKey = GlobalKey<NoteEditorState>();
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _mobileSearch = false;
+  AppController? _app;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final app = AppScope.read(context);
+    if (_app != app) {
+      _app?.notice.removeListener(_onNotice);
+      _app = app;
+      app.notice.addListener(_onNotice);
+    }
+  }
+
+  void _onNotice() {
+    final m = _app?.notice.value;
+    if (m != null && mounted) toast(context, m);
+    _app?.notice.value = null;
+  }
+
+  @override
+  void dispose() {
+    _app?.notice.removeListener(_onNotice);
+    super.dispose();
+  }
 
   void _newNote() {
     _editorKey.currentState?.flush();
     AppScope.read(context).newNote();
+  }
+
+  /// Bouton + : page vide, base de données ou modèle.
+  Future<void> _newFromSheet() async {
+    _editorKey.currentState?.flush();
+    final app = AppScope.read(context);
+    if (app.view == NavView.templates) {
+      app.newNote();
+      return;
+    }
+    await showNewPageSheet(context);
+  }
+
+  Future<void> _quickOpen() async {
+    _editorKey.currentState?.flush();
+    await showQuickSwitcher(context);
+  }
+
+  void _openId(String id) {
+    _editorKey.currentState?.flush();
+    AppScope.read(context).openPage(id);
   }
 
   void _saveNow() {
@@ -78,6 +125,8 @@ class _HomeShellState extends State<HomeShell> {
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyN, control: true): _newNote,
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true, shift: true): _newFromSheet,
+        const SingleActivator(LogicalKeyboardKey.keyP, control: true): _quickOpen,
         const SingleActivator(LogicalKeyboardKey.keyF, control: true): _search,
         const SingleActivator(LogicalKeyboardKey.keyS, control: true): _saveNow,
       },
@@ -114,15 +163,15 @@ class _HomeShellState extends State<HomeShell> {
               Text('$count', style: TextStyle(fontFamily: kFontMono, fontSize: 11, color: nn.mid)),
             ]),
           ),
-          Expanded(child: NoteList(onOpen: _open)),
+          Expanded(child: app.view == NavView.tasks ? TasksPane(onOpen: _openId) : NoteList(onOpen: _open)),
         ]),
         Positioned(
           right: 20,
           bottom: 20,
           child: FloatingActionButton(
             heroTag: 'new-note',
-            tooltip: 'Nouvelle note (Ctrl+N)',
-            onPressed: _newNote,
+            tooltip: 'Nouvelle page (Ctrl+N : page vide · Ctrl+Maj+N : modèles)',
+            onPressed: _newFromSheet,
             child: const Icon(Icons.add_rounded, size: 28),
           ),
         ),
@@ -152,7 +201,9 @@ class _HomeShellState extends State<HomeShell> {
                     const SizedBox(height: 20),
                     const DotTitle('Nothing Notes', size: 26),
                     const SizedBox(height: 10),
-                    Text('Sélectionnez une note ou créez-en une (Ctrl+N)', style: TextStyle(color: context.nn.mid)),
+                    Text('Sélectionnez une page ou créez-en une (Ctrl+N)', style: TextStyle(color: context.nn.mid)),
+                    const SizedBox(height: 6),
+                    Text('Ctrl+P : aller à une page', style: TextStyle(color: context.nn.mid, fontSize: 12.5)),
                   ]),
                 ),
               ]),
@@ -220,7 +271,8 @@ class _HomeShellState extends State<HomeShell> {
             ? null
             : FloatingActionButton(
                 heroTag: 'new-note',
-                onPressed: _newNote,
+                tooltip: 'Nouvelle page',
+                onPressed: _newFromSheet,
                 child: const Icon(Icons.add_rounded, size: 30),
               ),
         body: SafeArea(
@@ -278,8 +330,10 @@ class _HomeShellState extends State<HomeShell> {
                             if (v == 'settings') _openSettings();
                             if (v == 'devices') _openDevices();
                             if (v == 'sync') app.syncNow();
+                            if (v == 'find') _quickOpen();
                           },
                           itemBuilder: (c) => const [
+                            PopupMenuItem(value: 'find', child: Text('Aller à une page…')),
                             PopupMenuItem(value: 'devices', child: Text('Appareils')),
                             PopupMenuItem(value: 'sync', child: Text('Synchroniser maintenant')),
                             PopupMenuItem(value: 'settings', child: Text('Paramètres')),
@@ -292,9 +346,11 @@ class _HomeShellState extends State<HomeShell> {
                         padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
                         child: Row(children: [Expanded(child: SearchField(autofocus: true)), SortFilterButton()]),
                       ),
-                    const TagChipsRow(),
-                    const SizedBox(height: 8),
-                    Expanded(child: NoteList(onOpen: _open)),
+                    if (app.view != NavView.tasks) ...[
+                      const TagChipsRow(),
+                      const SizedBox(height: 8),
+                    ],
+                    Expanded(child: app.view == NavView.tasks ? TasksPane(onOpen: _openId) : NoteList(onOpen: _open)),
                   ]),
           ),
         ),

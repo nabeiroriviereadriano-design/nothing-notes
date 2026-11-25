@@ -30,10 +30,25 @@ def manifest(s):
             s = s.replace("<queries>", "<queries>\n" + q, 1)
         else:
             s = s.replace("</manifest>", "    <queries>\n" + q + "    </queries>\n</manifest>", 1)
+    # Recevoir un texte ou un fichier Markdown partagé depuis une autre appli.
+    if "android.intent.action.SEND" not in s:
+        share = ('            <intent-filter>\n'
+                 '                <action android:name="android.intent.action.SEND"/>\n'
+                 '                <category android:name="android.intent.category.DEFAULT"/>\n'
+                 '                <data android:mimeType="text/*"/>\n'
+                 '            </intent-filter>\n')
+        s = s.replace("        </activity>", share + "        </activity>", 1)
     return s
 
 
 edit("android/app/src/main/AndroidManifest.xml", manifest)
+
+# Activité principale : partage entrant et sortant (canal « nothing_notes/share »).
+for kt in (app / "android/app/src/main").rglob("MainActivity.kt"):
+    pkg = re.search(r"^package\s+([\w.]+)", kt.read_text(encoding="utf-8"), re.M).group(1)
+    src = (pathlib.Path(__file__).resolve().parent / "android/MainActivity.kt").read_text(encoding="utf-8")
+    kt.write_text(src.replace("PACKAGE_NAME", pkg), encoding="utf-8")
+    print(f"remplacé {kt.relative_to(app)}")
 
 
 def gradle(s):

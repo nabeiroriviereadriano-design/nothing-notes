@@ -32,6 +32,10 @@ int userVersionOf(String path) {
   }
 }
 
+extension _Let<T> on T {
+  R let<R>(R Function(T) f) => f(this);
+}
+
 void main() {
   late Directory dir;
   late String dbPath;
@@ -144,9 +148,19 @@ void main() {
       repo.createNote(title: 'Ajoutée après la sauvegarde');
       store.close();
 
+      final seqBefore = int.parse(LocalStore.open(dbPath).let((st) {
+        final v = st.getMeta('seq')!;
+        st.close();
+        return v;
+      }));
       safety.restore(b.path, dbPath);
       store = LocalStore.open(dbPath);
-      expect(DataFingerprint.of(store.database), saved);
+      final restored = DataFingerprint.of(store.database);
+      expect(restored.counts, saved.counts, reason: 'mêmes données que la sauvegarde');
+      expect(NotesRepository(store: store, filesDir: p.join(dir.path, 'files')).allNotes().any((n) => n.title == 'Ajoutée après la sauvegarde'),
+          isFalse);
+      expect(int.parse(store.getMeta('seq')!), greaterThanOrEqualTo(seqBefore),
+          reason: 'le journal des changements ne recule jamais (sinon les autres appareils ignoreraient les prochaines modifications)');
       store.close();
       expect(safety.list().map((x) => x.label), containsAll(['manuelle', 'avant-restauration']));
       final undo = safety.list().firstWhere((x) => x.label == 'avant-restauration');

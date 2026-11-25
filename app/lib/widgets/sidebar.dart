@@ -65,12 +65,33 @@ class Sidebar extends StatelessWidget {
                 onTap: () => go(NavView.all),
               ),
               _NavItem(
+                icon: Icons.history_rounded,
+                label: 'Récents',
+                selected: app.view == NavView.recent,
+                onTap: () => go(NavView.recent),
+              ),
+              _NavItem(
                 icon: Icons.star_outline_rounded,
                 label: 'Favoris',
                 count: c.favorites,
                 selected: app.view == NavView.favorites,
                 onTap: () => go(NavView.favorites),
               ),
+              _NavItem(
+                icon: Icons.task_alt_rounded,
+                label: 'Tâches',
+                count: c.tasks,
+                selected: app.view == NavView.tasks,
+                onTap: () => go(NavView.tasks),
+              ),
+              _NavItem(
+                icon: Icons.dashboard_customize_outlined,
+                label: 'Modèles',
+                count: c.templates,
+                selected: app.view == NavView.templates,
+                onTap: () => go(NavView.templates),
+              ),
+              _PageTree(onNavigate: onNavigate),
               _Group(
                 icon: Icons.folder_open_outlined,
                 label: 'Dossiers',
@@ -225,7 +246,8 @@ class _NavItem extends StatelessWidget {
     final fg = selected ? nn.invertedFg : nn.fg;
     return Padding(
       padding: EdgeInsets.only(left: indent, bottom: 2),
-      child: Material(
+      child: Stack(children: [
+        Material(
         color: selected ? nn.invertedBg : Colors.transparent,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
@@ -255,7 +277,132 @@ class _NavItem extends StatelessWidget {
           ),
         ),
       ),
+        // Repère rouge de l'élément actif.
+        if (selected)
+          const Positioned(left: 4, top: 12, bottom: 12, child: SizedBox(width: 3, child: ColoredBox(color: NColors.red))),
+      ]),
     );
+  }
+}
+
+/// Arborescence des pages qui ont des sous-pages (et des bases de données).
+class _PageTree extends StatelessWidget {
+  const _PageTree({this.onNavigate});
+  final VoidCallback? onNavigate;
+
+  @override
+  Widget build(BuildContext context) {
+    final app = AppScope.of(context);
+    final repo = app.repo!;
+    final all = repo.allNotes().where((n) => !n.trashed && !n.isTemplate && !n.archived).toList();
+    final byId = {for (final n in all) n.id: n};
+    final kids = <String, List<Note>>{};
+    for (final n in all) {
+      if (n.parentId != null && byId.containsKey(n.parentId)) kids.putIfAbsent(n.parentId!, () => []).add(n);
+    }
+    final roots = all
+        .where((n) => (n.parentId == null || !byId.containsKey(n.parentId)) && (kids.containsKey(n.id) || n.isDatabase))
+        .toList()
+      ..sort((a, b) => foldText(a.title).compareTo(foldText(b.title)));
+    if (roots.isEmpty) return const SizedBox.shrink();
+
+    List<Widget> branch(Note n, int depth, Set<String> seen) {
+      if (!seen.add(n.id) || depth > 8) return const [];
+      final children = (kids[n.id] ?? const <Note>[])..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      return [
+        _TreeNode(
+          note: n,
+          depth: depth,
+          hasChildren: children.isNotEmpty,
+          selected: app.selectedNoteId == n.id,
+          onTap: () {
+            app.openPage(n.id);
+            onNavigate?.call();
+          },
+          children: [for (final c in children) ...branch(c, depth + 1, seen)],
+        ),
+      ];
+    }
+
+    final seen = <String>{};
+    return _Group(
+      icon: Icons.account_tree_outlined,
+      label: 'Pages',
+      onAdd: () {
+        app.newNote();
+        onNavigate?.call();
+      },
+      children: [for (final r in roots.take(40)) ...branch(r, 0, seen)],
+    );
+  }
+}
+
+class _TreeNode extends StatefulWidget {
+  const _TreeNode({
+    required this.note,
+    required this.depth,
+    required this.hasChildren,
+    required this.selected,
+    required this.onTap,
+    required this.children,
+  });
+  final Note note;
+  final int depth;
+  final bool hasChildren;
+  final bool selected;
+  final VoidCallback onTap;
+  final List<Widget> children;
+
+  @override
+  State<_TreeNode> createState() => _TreeNodeState();
+}
+
+class _TreeNodeState extends State<_TreeNode> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final nn = context.nn;
+    final n = widget.note;
+    final fg = widget.selected ? nn.invertedFg : nn.fg;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(
+        padding: EdgeInsets.only(left: widget.depth * 14.0, bottom: 2),
+        child: Material(
+          color: widget.selected ? nn.invertedBg : Colors.transparent,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: widget.onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              child: Row(children: [
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: widget.hasChildren
+                      ? IconButton(
+                          padding: EdgeInsets.zero,
+                          iconSize: 18,
+                          tooltip: _open ? 'Replier' : 'Déplier',
+                          onPressed: () => setState(() => _open = !_open),
+                          icon: Icon(_open ? Icons.expand_more_rounded : Icons.chevron_right_rounded, color: fg),
+                        )
+                      : null,
+                ),
+                PageIcon(note: n, size: 16, color: fg),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(n.title.isEmpty ? 'Sans titre' : n.title,
+                      maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13.5, color: fg)),
+                ),
+              ]),
+            ),
+          ),
+        ),
+      ),
+      if (_open) ...widget.children,
+    ]);
   }
 }
 

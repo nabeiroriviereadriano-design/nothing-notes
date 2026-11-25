@@ -7,15 +7,26 @@ import 'package:flutter/services.dart';
 import 'package:notes_core/notes_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../screens/database_view.dart';
 import '../services/exporter.dart';
+import '../services/share_bridge.dart';
 import '../state/app_controller.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/pages_ui.dart';
+import '../widgets/tasks_pane.dart';
 import 'inline_controller.dart';
 
 const _listTypes = {BlockType.bullet, BlockType.numbered, BlockType.todo};
-const _noteFields = ['title', 'content', 'folder_id', 'tags', 'favorite', 'archived', 'trashed_at', 'purged'];
+
+/// Champs de pure gestion, ignorés pour savoir si la note a changé.
+const _metaFields = {'updated_at', 'device_id', 'created_at'};
+
+/// Vrai si les deux lignes ont le même contenu (TOUS les champs, y compris
+/// ceux des versions futures, sauf les horodatages).
+bool _sameRow(Map<String, dynamic> a, Map<String, dynamic> b) =>
+    {...a.keys, ...b.keys}.where((k) => !_metaFields.contains(k)).every((k) => jsonEq(a[k], b[k]));
 
 /// Bloc de l'éditeur : le bloc de données et ses contrôleurs d'interface.
 class _EB {
@@ -28,9 +39,15 @@ class _EB {
   final FocusNode focus;
   List<List<TextEditingController>>? cells;
 
+  /// Contenu d'un bloc repliable.
+  InlineController? body;
+  FocusNode? bodyFocus;
+
   void dispose() {
     controller.dispose();
     focus.dispose();
+    body?.dispose();
+    bodyFocus?.dispose();
     for (final r in cells ?? const <List<TextEditingController>>[]) {
       for (final c in r) {
         c.dispose();
@@ -156,6 +173,25 @@ class NoteEditorState extends State<NoteEditor> {
           [for (var c = 0; c < b.rows![r].length; c++) _cellController(eb, r, c)]
       ];
     }
+    if (b.type == BlockType.toggle) {
+      final body = InlineController(text: b.body);
+      final bf = FocusNode();
+      eb.body = body;
+      eb.bodyFocus = bf;
+      body.addListener(() {
+        if (_applying || body.text == eb.block.body) return;
+        _snapshot();
+        eb.block.body = body.text;
+        _scheduleSave();
+      });
+      bf.addListener(() {
+        body.revealMarkers = bf.hasFocus;
+        if (bf.hasFocus) {
+          final i = _blocks.indexOf(eb);
+          if (i != _focused && mounted) setState(() => _focused = i);
+        }
+      });
+    }
     eb.controller.addListener(() => _onBlockText(eb));
     eb.focus.addListener(() {
       eb.controller.revealMarkers = eb.focus.hasFocus;
@@ -195,7 +231,7 @@ class NoteEditorState extends State<NoteEditor> {
       setState(() => note = null);
       return;
     }
-    final same = _lastSaved != null && _noteFields.every((f) => jsonEq(storeRow[f], _lastSaved![f]));
+    final same = _lastSaved != null && _sameRow(storeRow, _lastSaved!);
     if (same) {
       if (hadConflict != note!.hasConflict) setState(() {});
       return;
@@ -235,6 +271,14 @@ class NoteEditorState extends State<NoteEditor> {
           ..text = b.text
           ..checked = b.checked
           ..attachmentId = b.attachmentId;
+        existing.block.extra
+          ..clear()
+          ..addAll(b.extra);
+        final body = existing.body;
+        if (body != null && body.text != b.body) {
+          final off = body.selection.baseOffset.clamp(0, b.body.length);
+          body.value = TextEditingValue(text: b.body, selection: TextSelection.collapsed(offset: off));
+        }
         if (existing.controller.text != b.text) {
           final off = existing.controller.selection.baseOffset.clamp(0, b.text.length);
           existing.controller.value =
@@ -260,7 +304,16 @@ class NoteEditorState extends State<NoteEditor> {
       ..favorite = fresh.favorite
       ..archived = fresh.archived
       ..trashedAt = fresh.trashedAt
-      ..updatedAt = fresh.updatedAt;
+      ..updatedAt = fresh.updatedAt
+      ..parentId = fresh.parentId
+      ..kind = fresh.kind
+      ..icon = fresh.icon
+      ..props = fresh.props
+      ..db = fresh.db
+      ..templateFor = fresh.templateFor;
+    note!.extra
+      ..clear()
+      ..addAll(fresh.extra);
     _applying = false;
     _focused = _blocks.indexWhere((b) => b.focus.hasFocus);
     setState(() {});
@@ -374,9 +427,136 @@ class NoteEditorState extends State<NoteEditor> {
       return;
     }
     _snapshot();
+    final old = eb.block.text;
     eb.block.text = text;
     _scheduleSave();
     if (eb.block.type == BlockType.paragraph) _autoFormat(eb);
+    // « / » dans un bloc vide : menu d'insertion. « @ » : lien vers une page.
+    final cur = eb.controller.selection.baseOffset;
+    if (text.length == old.length + 1 && cur > 0 && cur <= text.length && eb.block.type != BlockType.code) {
+      final ch = text[cur - 1];
+      final before = cur >= 2 ? text[cur - 2] : ' ';
+      if (ch == '/' && text == '/') {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _slashMenu(eb));
+      } else if (ch == '@' && (before == ' ' || before == '\n')) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _mention(eb, cur - 1));
+      }
+    }
+  }
+
+  Future<void> _slashMenu(_EB eb) async {
+    final key = await showBlockMenu(context);
+    if (!mounted) return;
+    final i = _blocks.indexOf(eb);
+    if (i < 0) return;
+    if (eb.controller.text == '/') {
+      _applying = true;
+      eb.controller.value = const TextEditingValue(text: '', selection: TextSelection.collapsed(offset: 0));
+      eb.block.text = '';
+      _applying = false;
+      _scheduleSave();
+    }
+    if (key == null) {
+      eb.focus.requestFocus();
+      return;
+    }
+    setState(() => _focused = i);
+    await insertChoice(key);
+  }
+
+  Future<void> _mention(_EB eb, int at) async {
+    final n = await pickPage(context, title: 'Lien vers une page', excludeId: note?.id);
+    if (!mounted) return;
+    final text = eb.controller.text;
+    if (n == null || at >= text.length || text[at] != '@') {
+      eb.focus.requestFocus();
+      return;
+    }
+    final link = pageLink(n.title.isEmpty ? 'Sans titre' : n.title.replaceAll(RegExp(r'[\[\]]'), ''), n.id);
+    _snapshot(force: true);
+    final next = text.substring(0, at) + link + text.substring(at + 1);
+    eb.controller.value = TextEditingValue(text: next, selection: TextSelection.collapsed(offset: at + link.length));
+    eb.focus.requestFocus();
+  }
+
+  /// Insère un lien vers une page à l'endroit du curseur (ou dans un nouveau bloc).
+  Future<void> insertPageLink() async {
+    final n = await pickPage(context, title: 'Lien vers une page', excludeId: note?.id);
+    if (n == null || !mounted) return;
+    _insertLinkTo(n);
+  }
+
+  void _insertLinkTo(Note n) {
+    final link = pageLink(n.title.isEmpty ? 'Sans titre' : n.title.replaceAll(RegExp(r'[\[\]]'), ''), n.id);
+    final eb = _current;
+    if (eb != null && eb.block.isTextual && eb.block.type != BlockType.code) {
+      final sel = eb.controller.selection;
+      final text = eb.controller.text;
+      final at = sel.isValid ? sel.end : text.length;
+      _snapshot(force: true);
+      final sep = at > 0 && text[at - 1] != ' ' ? ' ' : '';
+      eb.controller.value = TextEditingValue(
+        text: text.substring(0, at) + sep + link + text.substring(at),
+        selection: TextSelection.collapsed(offset: at + sep.length + link.length),
+      );
+      eb.focus.requestFocus();
+    } else {
+      _insertBlock(_insertIndex, Block(text: link));
+    }
+  }
+
+  /// Applique un choix du menu d'insertion.
+  Future<void> insertChoice(String key) async {
+    if (_readOnly || note == null) return;
+    final cur = _current;
+    final emptyPara = cur != null && cur.block.type == BlockType.paragraph && cur.controller.text.isEmpty;
+    switch (key) {
+      case 'pagelink':
+        await insertPageLink();
+      case 'subpage':
+      case 'database':
+        final title = await promptText(context,
+            title: key == 'database' ? 'Nouvelle base de données' : 'Nouvelle sous-page', hint: 'Titre', ok: 'Créer');
+        if (title == null || !mounted) return;
+        flush();
+        final app = AppScope.read(context);
+        final child = key == 'database'
+            ? repo.createDatabase(title: title.isEmpty ? 'Nouvelle base' : title, parentId: note!.id)
+            : repo.createSubPage(note!.id, title: title);
+        _insertLinkTo(child);
+        flush();
+        app.openPage(child.id);
+      case 'task':
+        final b = Block(type: BlockType.todo)..task = TaskInfo(status: TaskStatus.todo);
+        if (emptyPara) {
+          _setType(cur!, BlockType.todo);
+          cur.block.task = TaskInfo(status: TaskStatus.todo);
+          cur.focus.requestFocus();
+        } else {
+          _insertBlock(_insertIndex, b, focusAtStart: true);
+        }
+      case BlockType.image:
+        await addAttachment(image: true);
+      case BlockType.file:
+        await addAttachment(image: false);
+      case BlockType.divider:
+        if (emptyPara) {
+          final i = _blocks.indexOf(cur!);
+          _setType(cur, BlockType.divider, text: '');
+          _insertBlock(i + 1, Block(), focusAtStart: true);
+        } else {
+          insertDivider();
+        }
+      case BlockType.table:
+        if (emptyPara) _removeAt(_blocks.indexOf(cur!), focusPrevious: false);
+        insertTable();
+      case BlockType.toggle:
+        final i = emptyPara ? _blocks.indexOf(cur!) : _insertIndex;
+        if (emptyPara) _removeAt(i, focusPrevious: false);
+        _insertBlock(i, Block(type: BlockType.toggle, extra: {'body': ''}), focusAtStart: true);
+      default:
+        applyBlockType(key);
+    }
   }
 
   /// Raccourcis de saisie façon Markdown : « - », « 1. », « [] », « # », « > », « ``` », « --- ».
@@ -390,6 +570,7 @@ class NoteEditorState extends State<NoteEditor> {
       '[ ] ': BlockType.todo,
       '# ': BlockType.heading1,
       '## ': BlockType.heading2,
+      '### ': BlockType.heading3,
       '> ': BlockType.quote,
       '```': BlockType.code,
     };
@@ -431,6 +612,11 @@ class NoteEditorState extends State<NoteEditor> {
         return KeyEventResult.handled;
       }
     }
+    if (ctrl && shift && (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.arrowDown)) {
+      moveCurrent(key == LogicalKeyboardKey.arrowUp ? -1 : 1);
+      eb.focus.requestFocus();
+      return KeyEventResult.handled;
+    }
     if (ctrl && key == LogicalKeyboardKey.enter && eb.block.type == BlockType.code) {
       _insertBlock(i + 1, Block(), focusAtStart: true);
       return KeyEventResult.handled;
@@ -457,6 +643,14 @@ class NoteEditorState extends State<NoteEditor> {
 
   void _backspaceAtStart(_EB eb) {
     final i = _blocks.indexOf(eb);
+    if (eb.block.type == BlockType.toggle) {
+      // Jamais de fusion qui ferait perdre le contenu replié.
+      if (eb.controller.text.isEmpty && eb.block.body.isEmpty) {
+        _removeAt(i, focusPrevious: false);
+        _insertBlock(i, Block(), focusAtStart: true);
+      }
+      return;
+    }
     if (eb.block.type != BlockType.paragraph && eb.block.isTextual) {
       _setType(eb, BlockType.paragraph);
       return;
@@ -489,7 +683,7 @@ class NoteEditorState extends State<NoteEditor> {
     if (i < 0 || i >= _blocks.length) return;
     final eb = _blocks[i];
     setState(() => _focused = i);
-    if (!eb.block.isTextual) return;
+    if (!eb.block.isTextual && eb.block.type != BlockType.toggle) return;
     eb.focus.requestFocus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final len = eb.controller.text.length;
@@ -540,6 +734,10 @@ class NoteEditorState extends State<NoteEditor> {
   /// Transforme le bloc courant (ou en ajoute un) au type demandé.
   void applyBlockType(String type) {
     if (_readOnly) return;
+    if (type == BlockType.toggle) {
+      insertChoice(BlockType.toggle);
+      return;
+    }
     final cur = _current;
     if (cur != null && cur.block.isTextual && BlockType.textual.contains(type)) {
       _setType(cur, cur.block.type == type && type != BlockType.paragraph ? BlockType.paragraph : type);
@@ -638,6 +836,34 @@ class NoteEditorState extends State<NoteEditor> {
     _scheduleSave();
   }
 
+  void _reorder(int from, int to) {
+    if (_readOnly) return;
+    if (to > from) to -= 1;
+    if (from == to || from < 0 || from >= _blocks.length) return;
+    _snapshot(force: true);
+    setState(() {
+      final eb = _blocks.removeAt(from);
+      _blocks.insert(to.clamp(0, _blocks.length), eb);
+      _focused = to;
+    });
+    _scheduleSave();
+  }
+
+  /// Case à cocher : suivi comme tâche (statut, échéance, priorité).
+  Future<void> editTask([_EB? target]) async {
+    final eb = target ?? _current;
+    if (eb == null || _readOnly) return;
+    if (eb.block.type != BlockType.todo) {
+      _setType(eb, BlockType.todo);
+    }
+    if (eb.block.task == null) {
+      _snapshot(force: true);
+      eb.block.task = TaskInfo(status: eb.block.checked ? TaskStatus.done : TaskStatus.todo);
+    }
+    flush();
+    await showTaskSheet(context, repo, note!.id, eb.block.id);
+  }
+
   void deleteCurrent() {
     final eb = _current;
     if (eb == null) return;
@@ -655,23 +881,51 @@ class NoteEditorState extends State<NoteEditor> {
     if (n == null) {
       return const EmptyState(icon: Icons.delete_outline_rounded, title: 'Note supprimée');
     }
-    AppScope.of(context); // reconstruit l'éditeur quand les données changent
+    final app = AppScope.of(context); // reconstruit l'éditeur quand les données changent
     final wide = MediaQuery.of(context).size.width >= 700;
     final tags = {for (final t in repo.tags()) t.id: t};
     final folder = repo.folders().where((f) => f.id == n.folderId).firstOrNull;
+    final ancestors = repo.ancestorsOf(n.id);
+    final parent = ancestors.isEmpty ? null : ancestors.last;
+    final children = n.isDatabase ? const <Note>[] : repo.childrenOf(n.id);
+    final backlinks = repo.backlinksOf(n.id);
+    final hPad = wide ? 28.0 : 20.0;
 
     return Column(children: [
       _Header(editor: this, note: n, tags: tags, onBack: widget.onBack),
       if (n.hasConflict) _ConflictBanner(onTap: () => showConflictDialog(context, repo, n.id)),
       if (n.trashed) _TrashBanner(repo: repo, note: n),
+      if (n.isTemplate) const _InfoBanner(icon: Icons.dashboard_customize_outlined, text: 'Modèle : son contenu est copié dans les nouvelles pages créées à partir de lui.'),
       Expanded(
         child: Scrollbar(
           controller: _scroll,
-          child: ListView(
+          child: CustomScrollView(
             controller: _scroll,
-            padding: EdgeInsets.fromLTRB(wide ? 28 : 20, 8, wide ? 28 : 20, 120),
-            children: [
-              TextField(
+            slivers: [
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(hPad, 8, hPad, 0),
+                sliver: SliverList.list(children: [
+              Breadcrumb(ancestors: ancestors, onOpen: (id) {
+                flush();
+                app.openPage(id);
+              }),
+              Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                if (n.icon != null || !_readOnly)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: InkWell(
+                      key: const ValueKey('page-icon'),
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: _readOnly ? null : _chooseIcon,
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: n.icon != null
+                            ? Text(n.icon!, style: TextStyle(fontSize: wide ? 30 : 26))
+                            : Tooltip(message: 'Ajouter une icône', child: Icon(Icons.add_reaction_outlined, size: 22, color: nn.mid)),
+                      ),
+                    ),
+                  ),
+                Expanded(child: TextField(
                 controller: _title,
                 focusNode: _titleFocus,
                 readOnly: _readOnly,
@@ -689,7 +943,8 @@ class NoteEditorState extends State<NoteEditor> {
                   focusedBorder: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(vertical: 8),
                 ),
-              ),
+              )),
+              ]),
               Padding(
                 padding: const EdgeInsets.only(bottom: 14),
                 child: Text(
@@ -701,10 +956,23 @@ class NoteEditorState extends State<NoteEditor> {
                     else if (AppScope.read(context).syncStatus.state != SyncState.unpaired)
                       n.dirty ? 'pas encore transmise' : 'synchronisée',
                   ].join('  ·  '),
-                  style: TextStyle(fontSize: 12, color: n.hasConflict ? NColors.red : nn.mid),
+                  style: TextStyle(fontSize: 12, color: n.hasConflict ? redText(context) : nn.mid),
                 ),
               ),
-              for (var i = 0; i < _blocks.length; i++) _buildBlock(context, i, tags),
+              if (parent != null && parent.isDatabase) PropertyPanel(db: parent, entry: n, readOnly: _readOnly),
+                ]),
+              ),
+              SliverPadding(
+                padding: EdgeInsets.symmetric(horizontal: wide ? hPad - 22 : hPad - 16),
+                sliver: SliverReorderableList(
+                  itemCount: _blocks.length,
+                  onReorder: _reorder,
+                  itemBuilder: (c, i) => _reorderable(c, i, tags, wide),
+                ),
+              ),
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(hPad, 0, hPad, 120),
+                sliver: SliverList.list(children: [
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {
@@ -716,7 +984,35 @@ class NoteEditorState extends State<NoteEditor> {
                     _insertBlock(_blocks.length, Block(), focusAtStart: true);
                   }
                 },
-                child: const SizedBox(height: 160),
+                child: SizedBox(height: n.isDatabase ? 24 : 80),
+              ),
+              if (n.isDatabase) DatabaseView(dbId: n.id, readOnly: _readOnly),
+              if (!n.isDatabase && !n.isTemplate)
+                PageLinksSection(
+                  label: 'SOUS-PAGES',
+                  pages: children,
+                  onOpen: (id) {
+                    flush();
+                    app.openPage(id);
+                  },
+                  onAdd: _readOnly
+                      ? null
+                      : () async {
+                          flush();
+                          await showNewPageSheet(context, parentId: n.id);
+                        },
+                  addLabel: 'Nouvelle sous-page',
+                ),
+              if (backlinks.isNotEmpty)
+                PageLinksSection(
+                  label: 'MENTIONNÉE DANS',
+                  pages: backlinks,
+                  onOpen: (id) {
+                    flush();
+                    app.openPage(id);
+                  },
+                ),
+                ]),
               ),
             ],
           ),
@@ -724,6 +1020,45 @@ class NoteEditorState extends State<NoteEditor> {
       ),
       if (!_readOnly) _Toolbar(editor: this, wide: wide, link: _current?.controller.linkAtCursor()),
     ]);
+  }
+
+  Future<void> _chooseIcon() async {
+    final e = await pickEmoji(context);
+    if (e == null || note == null) return;
+    flush();
+    repo.setIcon(note!.id, e);
+  }
+
+  /// Bloc avec sa poignée de glisser-déposer.
+  Widget _reorderable(BuildContext context, int i, Map<String, Tag> tags, bool wide) {
+    final eb = _blocks[i];
+    final nn = context.nn;
+    final selected = _focused == i;
+    final handleW = wide ? 22.0 : 16.0;
+    return KeyedSubtree(
+      key: ValueKey('row-${eb.block.id}'),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SizedBox(
+          width: handleW,
+          child: _readOnly
+              ? null
+              : ReorderableDragStartListener(
+                  index: i,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.grab,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Opacity(
+                        opacity: selected ? 0.9 : (wide ? 0.28 : 0.0),
+                        child: Icon(Icons.drag_indicator_rounded, size: wide ? 18 : 16, color: nn.mid),
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+        Expanded(child: _buildBlock(context, i, tags)),
+      ]),
+    );
   }
 
   int _numberFor(int i) {
@@ -795,6 +1130,17 @@ class NoteEditorState extends State<NoteEditor> {
         );
       case BlockType.table:
         return wrap(_tableBlock(context, eb, i), padding: const EdgeInsets.symmetric(vertical: 8));
+      case BlockType.toggle:
+        return wrap(_toggleBlock(context, eb, i), padding: const EdgeInsets.symmetric(vertical: 2));
+    }
+    if (!b.isTextual) {
+      // Bloc d'une version future : affiché tel quel, jamais modifié ni supprimé en silence.
+      return wrap(Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: nn.line)),
+        child: Text('Bloc « ${b.type} » créé par une version plus récente de Nothing Notes.',
+            style: TextStyle(fontSize: 13, color: nn.mid)),
+      ));
     }
 
     // Blocs de texte
@@ -810,6 +1156,10 @@ class NoteEditorState extends State<NoteEditor> {
       case BlockType.heading2:
         style = base.copyWith(fontSize: 19, fontWeight: FontWeight.w600, height: 1.35);
         padding = const EdgeInsets.only(top: 10, bottom: 2);
+        break;
+      case BlockType.heading3:
+        style = base.copyWith(fontSize: 16.5, fontWeight: FontWeight.w600, height: 1.4);
+        padding = const EdgeInsets.only(top: 8, bottom: 1);
         break;
       case BlockType.quote:
         style = base.copyWith(fontStyle: FontStyle.italic, color: nn.mid);
@@ -832,7 +1182,10 @@ class NoteEditorState extends State<NoteEditor> {
         break;
       case BlockType.todo:
         if (b.checked) style = base.copyWith(color: nn.mid, decoration: TextDecoration.lineThrough, decorationColor: nn.mid);
-        leading = SizedBox(
+        leading = GestureDetector(
+          onLongPress: _readOnly ? null : () => editTask(eb),
+          onSecondaryTap: _readOnly ? null : () => editTask(eb),
+          child: SizedBox(
           width: 34,
           height: 24,
           child: Align(
@@ -848,13 +1201,20 @@ class NoteEditorState extends State<NoteEditor> {
                     ? null
                     : (v) {
                         _snapshot(force: true);
-                        setState(() => b.checked = v ?? false);
+                        setState(() {
+                          b.checked = v ?? false;
+                          final t = b.task;
+                          if (t != null) {
+                            t.status = b.checked ? TaskStatus.done : (t.status == TaskStatus.done ? TaskStatus.todo : t.status);
+                            b.task = t;
+                          }
+                        });
                         _scheduleSave();
                       },
               ),
             ),
           ),
-        );
+        ));
         break;
       case BlockType.code:
         style = TextStyle(fontFamily: kFontMono, fontSize: 13.5, height: 1.5, color: nn.fg);
@@ -911,22 +1271,107 @@ class NoteEditorState extends State<NoteEditor> {
       );
     }
 
+    final task = b.type == BlockType.todo ? b.task : null;
     return wrap(
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (leading != null) leading,
-        Expanded(child: field),
+        Expanded(
+          child: task == null
+              ? field
+              : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  field,
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2, bottom: 4),
+                    child: TaskChips(info: task, onTap: _readOnly ? null : () => editTask(eb)),
+                  ),
+                ]),
+        ),
+        if (b.type == BlockType.todo && selected && !_readOnly)
+          IconButton(
+            key: const ValueKey('track-task'),
+            tooltip: task == null ? 'Suivre comme tâche' : 'Modifier la tâche',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => editTask(eb),
+            icon: Icon(task == null ? Icons.event_available_outlined : Icons.tune_rounded, size: 19, color: nn.mid),
+          ),
       ]),
       padding: padding,
     );
   }
 
+  Widget _toggleBlock(BuildContext context, _EB eb, int i) {
+    final nn = context.nn;
+    final b = eb.block;
+    final open = !b.collapsed;
+    final base = TextStyle(fontSize: 16, height: 1.5, color: nn.fg, fontFamily: kFontBody);
+    InputDecoration deco(String hint, bool show) => InputDecoration(
+          isCollapsed: true,
+          filled: false,
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          hintText: show ? hint : null,
+          hintStyle: base.copyWith(color: nn.mid.withValues(alpha: 0.6)),
+          contentPadding: const EdgeInsets.symmetric(vertical: 2),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        InkWell(
+          key: ValueKey('toggle-${b.id}'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: () {
+            setState(() => b.collapsed = open);
+            _scheduleSave();
+          },
+          child: SizedBox(
+            width: 26,
+            height: 26,
+            child: AnimatedRotation(
+              turns: open ? 0.25 : 0,
+              duration: const Duration(milliseconds: 150),
+              child: Icon(Icons.play_arrow_rounded, size: 18, color: open ? NColors.red : nn.fg),
+            ),
+          ),
+        ),
+        Expanded(
+          child: TextField(
+            controller: eb.controller,
+            focusNode: eb.focus,
+            readOnly: _readOnly,
+            maxLines: null,
+            style: base.copyWith(fontWeight: FontWeight.w500),
+            decoration: deco('Bloc repliable', _focused == i && b.text.isEmpty),
+          ),
+        ),
+      ]),
+      if (open)
+        Padding(
+          padding: const EdgeInsets.only(left: 26, top: 2, bottom: 4),
+          child: Container(
+            padding: const EdgeInsets.only(left: 12),
+            decoration: BoxDecoration(border: Border(left: BorderSide(color: nn.line, width: 2))),
+            child: TextField(
+              controller: eb.body,
+              focusNode: eb.bodyFocus,
+              readOnly: _readOnly,
+              maxLines: null,
+              keyboardType: TextInputType.multiline,
+              style: base,
+              decoration: deco('Contenu masqué quand le bloc est replié', _focused == i && b.body.isEmpty),
+            ),
+          ),
+        ),
+    ]);
+  }
+
   String _hintFor(String type) => switch (type) {
         BlockType.heading1 => 'Titre',
         BlockType.heading2 => 'Sous-titre',
+        BlockType.heading3 => 'Titre 3',
         BlockType.quote => 'Citation',
         BlockType.todo => 'Tâche',
         BlockType.bullet || BlockType.numbered => 'Élément de liste',
-        _ => 'Écrire…  (« - » liste, « [] » tâche, « # » titre)',
+        _ => 'Écrire…  « / » pour insérer un bloc, « @ » pour lier une page',
       };
 
   Widget _tableBlock(BuildContext context, _EB eb, int i) {
@@ -1135,6 +1580,7 @@ class _Header extends StatelessWidget {
           icon: const Icon(Icons.ios_share_rounded, size: 21),
           onSelected: (v) => _share(context, v),
           itemBuilder: (c) => [
+            if (ShareBridge.supported) const PopupMenuItem(value: 'share', child: Text('Partager…')),
             const PopupMenuItem(value: 'copy', child: Text('Copier le texte')),
             const PopupMenuDivider(),
             for (final f in ExportFormat.values) PopupMenuItem(value: f.name, child: Text('Exporter en ${f.label}')),
@@ -1146,6 +1592,14 @@ class _Header extends StatelessWidget {
           onSelected: (v) => _menu(context, v),
           itemBuilder: (c) => [
             if (!note.trashed) ...[
+              if (!note.isTemplate) ...[
+                const PopupMenuItem(value: 'subpage', child: Text('Nouvelle sous-page')),
+                const PopupMenuItem(value: 'movepage', child: Text('Déplacer dans une page…')),
+                const PopupMenuItem(value: 'tpl-apply', child: Text('Ajouter le contenu d\'un modèle…')),
+                const PopupMenuItem(value: 'tpl-save', child: Text('Enregistrer comme modèle')),
+              ],
+              const PopupMenuItem(value: 'icon', child: Text('Icône de la page…')),
+              const PopupMenuDivider(),
               const PopupMenuItem(value: 'folder', child: Text('Déplacer vers un dossier…')),
               PopupMenuItem(value: 'archive', child: Text(note.archived ? 'Désarchiver' : 'Archiver')),
               const PopupMenuItem(value: 'history', child: Text('Historique des versions')),
@@ -1169,6 +1623,10 @@ class _Header extends StatelessWidget {
     final repo = editor.repo;
     final n = repo.note(note.id);
     if (n == null) return;
+    if (v == 'share') {
+      await ShareBridge.shareText(exportTxt(n, exportContextFor(repo, n)), subject: n.title);
+      return;
+    }
     if (v == 'copy') {
       await Clipboard.setData(ClipboardData(text: exportTxt(n)));
       if (context.mounted) toast(context, 'Texte copié');
@@ -1204,6 +1662,38 @@ class _Header extends StatelessWidget {
         final copy = repo.duplicateNote(note.id);
         app.select(copy.id);
         break;
+      case 'subpage':
+        if (context.mounted) await showNewPageSheet(context, parentId: note.id);
+        break;
+      case 'movepage':
+        if (!context.mounted) break;
+        final target = await pickPage(
+          context,
+          title: 'Déplacer « ${note.title.isEmpty ? 'Sans titre' : note.title} » dans…',
+          excludeId: note.id,
+          allow: (p) => repo.canMoveUnder(note.id, p.id) && !p.isTemplate,
+          rootLabel: note.parentId == null ? null : 'Premier niveau (aucune page parente)',
+        );
+        if (target == null) break;
+        repo.movePage(note.id, identical(target, kRootChoice) ? null : target.id);
+        if (context.mounted) toast(context, identical(target, kRootChoice) ? 'Page placée au premier niveau' : 'Page déplacée dans « ${target.title} »');
+        break;
+      case 'tpl-apply':
+        if (!context.mounted) break;
+        final t = await _pickTemplate(context, repo);
+        if (t == null) break;
+        repo.applyTemplate(note.id, t);
+        if (context.mounted) toast(context, 'Modèle « ${t.name} » ajouté (rien n\'a été remplacé)');
+        break;
+      case 'tpl-save':
+        final t = repo.saveAsTemplate(note.id);
+        if (context.mounted) toast(context, 'Modèle « ${t.title} » enregistré');
+        break;
+      case 'icon':
+        if (!context.mounted) break;
+        final e = await pickEmoji(context);
+        if (e != null) repo.setIcon(note.id, e);
+        break;
       case 'conflict':
         await showConflictDialog(context, repo, note.id);
         break;
@@ -1228,6 +1718,45 @@ class _Header extends StatelessWidget {
         break;
     }
   }
+}
+
+Future<PageTemplate?> _pickTemplate(BuildContext context, NotesRepository repo) => showAdaptivePanel<PageTemplate>(
+      context,
+      builder: (c) => ListView(shrinkWrap: true, padding: const EdgeInsets.all(12), children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(12, 4, 12, 4),
+          child: Text('Ajouter le contenu d\'un modèle', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: Text('Le contenu est ajouté à la fin ; rien n\'est remplacé.', style: TextStyle(fontSize: 12.5, color: c.nn.mid)),
+        ),
+        for (final t in repo.templates())
+          ListTile(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            leading: Text(t.icon ?? '◦', style: const TextStyle(fontSize: 20)),
+            title: Text(t.name),
+            subtitle: t.description.isEmpty ? null : Text(t.description, maxLines: 1, overflow: TextOverflow.ellipsis),
+            onTap: () => Navigator.pop(c, t),
+          ),
+      ]),
+    );
+
+class _InfoBanner extends StatelessWidget {
+  const _InfoBanner({required this.icon, required this.text});
+  final IconData icon;
+  final String text;
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.fromLTRB(20, 6, 20, 6),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        decoration: BoxDecoration(color: context.nn.card, borderRadius: BorderRadius.circular(16)),
+        child: Row(children: [
+          Icon(icon, color: context.nn.mid, size: 20),
+          const SizedBox(width: 12),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 13.5))),
+        ]),
+      );
 }
 
 class _ConflictBanner extends StatelessWidget {
@@ -1295,17 +1824,30 @@ class _Toolbar extends StatelessWidget {
         PopupMenuItem(value: BlockType.paragraph, child: Text('Texte')),
         PopupMenuItem(value: BlockType.heading1, child: Text('Titre', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600))),
         PopupMenuItem(value: BlockType.heading2, child: Text('Sous-titre', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600))),
+        PopupMenuItem(value: BlockType.heading3, child: Text('Titre 3', style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600))),
+        PopupMenuItem(value: BlockType.toggle, child: Text('▸  Bloc repliable')),
         PopupMenuItem(value: BlockType.quote, child: Text('Citation', style: TextStyle(fontStyle: FontStyle.italic))),
         PopupMenuItem(value: BlockType.bullet, child: Text('•  Liste à puces')),
         PopupMenuItem(value: BlockType.numbered, child: Text('1.  Liste numérotée')),
       ],
     );
     final primary = <Widget>[
+      IconButton(
+        key: const ValueKey('insert-block'),
+        tooltip: 'Insérer un bloc (/)',
+        onPressed: () async {
+          final k = await showBlockMenu(context);
+          if (k != null) await editor.insertChoice(k);
+        },
+        icon: const Icon(Icons.add_circle_outline_rounded, size: 22, color: NColors.red),
+        visualDensity: VisualDensity.compact,
+      ),
       textStyles,
       btn(Icons.checklist_rounded, 'Case à cocher', () => editor.applyBlockType(BlockType.todo)),
       btn(Icons.image_outlined, 'Image', () => editor.addAttachment(image: true)),
       btn(Icons.code_rounded, 'Bloc de code', () => editor.applyBlockType(BlockType.code)),
       btn(Icons.table_chart_outlined, 'Tableau', editor.insertTable),
+      btn(Icons.alternate_email_rounded, 'Lien vers une page (@)', editor.insertPageLink),
     ];
     final secondary = <Widget>[
       btn(Icons.format_bold_rounded, 'Gras (Ctrl+B)', () => editor.wrapSelection('**')),
@@ -1341,6 +1883,8 @@ class _Toolbar extends StatelessWidget {
             editor.moveCurrent(1);
           case 'del':
             editor.deleteCurrent();
+          case 'task':
+            editor.editTask();
           case 'undo':
             editor.undo();
           case 'redo':
@@ -1358,6 +1902,7 @@ class _Toolbar extends StatelessWidget {
           PopupMenuItem(value: 'div', child: Text('Séparateur')),
           PopupMenuDivider(),
         ],
+        const PopupMenuItem(value: 'task', child: Text('Suivre comme tâche…')),
         const PopupMenuItem(value: 'up', child: Text('Monter le bloc')),
         const PopupMenuItem(value: 'down', child: Text('Descendre le bloc')),
         const PopupMenuItem(value: 'del', child: Text('Supprimer le bloc')),
@@ -1386,11 +1931,20 @@ class _Toolbar extends StatelessWidget {
                 if (link != null)
                   Padding(
                     padding: const EdgeInsets.only(left: 4),
-                    child: ActionChip(
-                      avatar: const Icon(Icons.open_in_new_rounded, size: 15, color: NColors.red),
-                      label: const Text('Ouvrir le lien'),
-                      onPressed: () => launchUrl(Uri.parse(link!), mode: LaunchMode.externalApplication),
-                    ),
+                    child: link!.startsWith(kPageLinkPrefix)
+                        ? ActionChip(
+                            avatar: const Icon(Icons.arrow_outward_rounded, size: 15, color: NColors.red),
+                            label: const Text('Ouvrir la page'),
+                            onPressed: () {
+                              editor.flush();
+                              AppScope.read(context).openPage(link!.substring(kPageLinkPrefix.length));
+                            },
+                          )
+                        : ActionChip(
+                            avatar: const Icon(Icons.open_in_new_rounded, size: 15, color: NColors.red),
+                            label: const Text('Ouvrir le lien'),
+                            onPressed: () => launchUrl(Uri.parse(link!), mode: LaunchMode.externalApplication),
+                          ),
                   ),
               ]),
             ),

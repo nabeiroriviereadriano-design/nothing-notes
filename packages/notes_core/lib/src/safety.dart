@@ -240,15 +240,38 @@ class DataSafety {
     } finally {
       check.dispose();
     }
+    var previousSeq = 0;
     if (File(dbPath).existsSync()) {
       final current = sqlite3.open(dbPath);
       try {
         _backup(current, 'avant-restauration');
+        previousSeq = _seqOf(current);
       } finally {
         current.dispose();
       }
     }
     restoreFile(backupPath, dbPath);
+    // Le compteur du journal des changements ne doit jamais reculer : sinon les
+    // appareils associés, qui ont déjà lu jusqu'à ce numéro, ignoreraient les
+    // prochaines modifications faites ici.
+    final db = sqlite3.open(dbPath);
+    try {
+      if (_seqOf(db) < previousSeq) {
+        db.execute("INSERT INTO meta(key, value) VALUES ('seq', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ['$previousSeq']);
+      }
+    } finally {
+      db.dispose();
+    }
+  }
+
+  static int _seqOf(Database db) {
+    try {
+      final rs = db.select("SELECT value FROM meta WHERE key = 'seq'");
+      return rs.isEmpty ? 0 : int.tryParse('${rs.first.values.first}') ?? 0;
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// Copie brute d'une sauvegarde à la place de la base (journal WAL compris).

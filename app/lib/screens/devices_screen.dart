@@ -155,7 +155,11 @@ class _PeerTile extends StatelessWidget {
     final Color color;
     if (peer.rejected) {
       state = 'Association supprimée sur l\'autre appareil — associez-les à nouveau';
-      color = NColors.red;
+      color = redText(context);
+    } else if (peer.outdated) {
+      state = 'Version différente de Nothing Notes — mettez à jour les deux appareils vers la même version. '
+          'La synchronisation est suspendue pour ne rien perdre.';
+      color = redText(context);
     } else if (peer.syncing) {
       state = 'Synchronisation…';
       color = nn.fg;

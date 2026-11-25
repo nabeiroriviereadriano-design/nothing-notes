@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   notes_core:
     path: ../packages/notes_core
   file_picker: ^13.3.3

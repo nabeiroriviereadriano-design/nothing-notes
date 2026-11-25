@@ -27,7 +27,30 @@ extension ExportFormatX on ExportFormat {
 ExportContext exportContextFor(NotesRepository repo, Note n) {
   final tags = {for (final t in repo.tags()) t.id: t.name};
   final folder = repo.folders().where((f) => f.id == n.folderId).firstOrNull?.name;
+  // Propriétés (entrée d'une base), contenu d'une base, sous-pages.
+  final parent = n.parentId == null ? null : repo.note(n.parentId!);
+  final properties = <(String, String)>[];
+  if (parent != null && parent.isDatabase) {
+    for (final p in repo.schemaOf(parent.id).props) {
+      final v = displayValue(p, n.props[p.id]);
+      if (v.isNotEmpty) properties.add((p.name, v));
+    }
+  }
+  List<List<String>>? table;
+  if (n.isDatabase) {
+    final schema = repo.schemaOf(n.id);
+    final view = schema.views.isEmpty ? DbView(name: 'Tableau') : schema.views.first;
+    table = [
+      ['Nom', ...schema.props.map((p) => p.name)],
+      for (final e in repo.queryEntries(n.id, view))
+        [e.title.isEmpty ? 'Sans titre' : e.title, ...schema.props.map((p) => displayValue(p, e.props[p.id]))],
+    ];
+  }
+  final subPages = n.isDatabase ? const <String>[] : repo.childrenOf(n.id).map((c) => c.title.isEmpty ? 'Sans titre' : c.title).toList();
   return ExportContext(
+    properties: properties,
+    table: table,
+    subPages: subPages,
     tagNames: n.tags.map((t) => tags[t]).whereType<String>().toList(),
     folderName: folder,
     attachmentName: (id) => repo.attachment(id)?.fileName,
@@ -140,6 +163,15 @@ Future<Uint8List> buildPdf(NotesRepository repo, List<Note> notes) async {
         style: const pw.TextStyle(fontSize: 9, color: mid),
       ),
       pw.SizedBox(height: 16),
+      for (final (k, v) in ctx.properties)
+        pw.Padding(
+          padding: const pw.EdgeInsets.only(bottom: 3),
+          child: pw.Row(children: [
+            pw.SizedBox(width: 120, child: pw.Text(k, style: const pw.TextStyle(fontSize: 10, color: mid))),
+            pw.Expanded(child: pw.Text(v, style: const pw.TextStyle(fontSize: 10))),
+          ]),
+        ),
+      if (ctx.properties.isNotEmpty) pw.SizedBox(height: 12),
     ];
     var counter = 0;
     for (final b in n.blocks) {
@@ -154,6 +186,29 @@ Future<Uint8List> buildPdf(NotesRepository repo, List<Note> notes) async {
           widgets.add(pw.Padding(
               padding: const pw.EdgeInsets.only(top: 8, bottom: 3),
               child: rich(b.text, size: 14)));
+          break;
+        case BlockType.heading3:
+          widgets.add(pw.Padding(
+              padding: const pw.EdgeInsets.only(top: 6, bottom: 2),
+              child: rich('**${b.text}**', size: 12)));
+          break;
+        case BlockType.toggle:
+          widgets.add(pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(vertical: 3),
+            child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+              pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+                pw.SizedBox(width: 14, child: pw.Text('›', style: pw.TextStyle(font: bold, color: red))),
+                pw.Expanded(child: rich(b.text)),
+              ]),
+              if (b.body.trim().isNotEmpty)
+                pw.Container(
+                  margin: const pw.EdgeInsets.only(left: 14, top: 2),
+                  padding: const pw.EdgeInsets.only(left: 8),
+                  decoration: const pw.BoxDecoration(border: pw.Border(left: pw.BorderSide(color: line, width: 1.5))),
+                  child: rich(b.body),
+                ),
+            ]),
+          ));
           break;
         case BlockType.quote:
           widgets.add(pw.Container(
@@ -258,7 +313,26 @@ Future<Uint8List> buildPdf(NotesRepository repo, List<Note> notes) async {
         alignment: pw.Alignment.centerRight,
         child: pw.Text('${c.pageNumber} / ${c.pagesCount}', style: const pw.TextStyle(fontSize: 8, color: mid)),
       ),
-      build: (c) => widgets,
+      build: (c) => [
+        ...widgets,
+        if (ctx.table case final t? when t.isNotEmpty)
+          pw.Padding(
+            padding: const pw.EdgeInsets.only(top: 10),
+            child: pw.TableHelper.fromTextArray(
+              data: t,
+              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9.5),
+              cellStyle: const pw.TextStyle(fontSize: 9.5),
+              border: pw.TableBorder.all(color: line),
+              headerDecoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFF3F3F3)),
+              cellAlignment: pw.Alignment.centerLeft,
+            ),
+          ),
+        if (ctx.subPages.isNotEmpty) ...[
+          pw.SizedBox(height: 14),
+          pw.Text('SOUS-PAGES', style: const pw.TextStyle(fontSize: 8.5, color: mid, letterSpacing: 1.2)),
+          for (final sp in ctx.subPages) pw.Text('•  $sp', style: const pw.TextStyle(fontSize: 10.5)),
+        ],
+      ],
     ));
   }
   return doc.save();
