@@ -263,6 +263,7 @@ class DataSafety {
     } finally {
       db.dispose();
     }
+    _prune();
   }
 
   static int _seqOf(Database db) {
@@ -286,7 +287,9 @@ class DataSafety {
   }
 
   void _prune() {
-    final auto = list().where((b) => b.label != 'manuelle').toList();
+    // Les sauvegardes d'avant migration et les sauvegardes manuelles ne sont
+    // jamais supprimées automatiquement.
+    final auto = list().where((b) => b.label == 'avant-restauration').toList();
     for (final b in auto.skip(keepAutomatic)) {
       try {
         File(b.path).deleteSync();
