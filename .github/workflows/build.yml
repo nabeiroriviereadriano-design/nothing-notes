@@ -2,7 +2,7 @@ name: Build Android + Windows
 
 on:
   push:
-    branches: [main]
+    branches: [main, notion]
     tags: ['v*']
   pull_request:
   workflow_dispatch:

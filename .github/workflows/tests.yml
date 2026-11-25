@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, notion]
   pull_request:
   workflow_dispatch:
 
@@ -24,10 +24,20 @@ jobs:
         working-directory: packages/notes_core
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: stable
       - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - name: Base de test produite par le vrai code de Nothing Notes 2.0.0
+        run: |
+          git worktree add "$RUNNER_TEMP/v2" 6b89c98
+          mkdir -p "$RUNNER_TEMP/v2/packages/notes_core/tool"
+          cp tool/v2_fixture.dart "$RUNNER_TEMP/v2/packages/notes_core/tool/"
+          (cd "$RUNNER_TEMP/v2/packages/notes_core" && dart pub get && dart run tool/v2_fixture.dart "$RUNNER_TEMP/v2.db" "$RUNNER_TEMP/v2-files")
+          echo "NN_V2_FIXTURE=$RUNNER_TEMP/v2.db" >> "$GITHUB_ENV"
+          echo "NN_V2_FILES=$RUNNER_TEMP/v2-files" >> "$GITHUB_ENV"
       - run: dart pub get
       - name: Analyse statique
         run: dart analyze 2>&1 | tee analyze.log
