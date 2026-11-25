@@ -308,7 +308,7 @@ class _PageTree extends StatelessWidget {
 
     List<Widget> branch(Note n, int depth, Set<String> seen) {
       if (!seen.add(n.id) || depth > 8) return const [];
-      final children = (kids[n.id] ?? const <Note>[])..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      final children = [...?kids[n.id]]..sort((a, b) => a.createdAt.compareTo(b.createdAt));
       return [
         _TreeNode(
           note: n,

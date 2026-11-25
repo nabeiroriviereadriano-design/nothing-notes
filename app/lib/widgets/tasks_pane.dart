@@ -159,10 +159,11 @@ class _TasksPaneState extends State<TasksPane> {
       TaskFilter.all: 'Toutes',
     };
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      SizedBox(
-        height: 42,
-        child: ListView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.symmetric(horizontal: 16), children: [
-          for (final f in labels.entries) ...[
+      // Tous les filtres restent visibles (retour à la ligne), sur téléphone comme sur PC.
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+        child: Wrap(spacing: 8, runSpacing: 8, children: [
+          for (final f in labels.entries)
             FilterPill(
               key: ValueKey('task-filter-${f.key.name}'),
               label: f.value,
@@ -170,8 +171,6 @@ class _TasksPaneState extends State<TasksPane> {
               dot: f.key == TaskFilter.overdue ? NColors.red : null,
               onTap: () => setState(() => _filter = f.key),
             ),
-            const SizedBox(width: 8),
-          ],
         ]),
       ),
       Expanded(
