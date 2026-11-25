@@ -163,17 +163,17 @@ void main() {
           reason: 'le journal des changements ne recule jamais (sinon les autres appareils ignoreraient les prochaines modifications)');
       store.close();
       expect(safety.list().map((x) => x.label), containsAll(['manuelle', 'avant-restauration']));
+      final undo = safety.list().firstWhere((x) => x.label == 'avant-restauration');
+      final repo2 = NotesRepository(store: LocalStore.open(undo.path), filesDir: p.join(dir.path, 'files'));
+      expect(repo2.allNotes().any((n) => n.title == 'Ajoutée après la sauvegarde'), isTrue,
+          reason: 'l\'état remplacé reste récupérable');
+      repo2.store.close();
       // Les copies « avant restauration » sont limitées, jamais les autres.
       for (var i = 0; i < 7; i++) {
         safety.restore(b.path, dbPath);
       }
       expect(safety.list().where((x) => x.label == 'avant-restauration').length, 5);
       expect(safety.list().where((x) => x.label == 'manuelle').length, 1);
-      final undo = safety.list().firstWhere((x) => x.label == 'avant-restauration');
-      final repo2 = NotesRepository(store: LocalStore.open(undo.path), filesDir: p.join(dir.path, 'files'));
-      expect(repo2.allNotes().any((n) => n.title == 'Ajoutée après la sauvegarde'), isTrue,
-          reason: 'l\'état remplacé reste récupérable');
-      repo2.store.close();
     });
   });
 
