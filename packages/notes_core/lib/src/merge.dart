@@ -261,7 +261,7 @@ List<Map<String, dynamic>>? mergeBlocks(
       } else {
         // Même bloc modifié des deux côtés : fusion champ par champ (par
         // exemple le texte ici, l'échéance de la tâche là-bas).
-        final m = _mergeMaps(b, l!, s!);
+        final m = _mergeMaps(b, l, s);
         if (m == null) return null;
         result[id] = m;
       }
