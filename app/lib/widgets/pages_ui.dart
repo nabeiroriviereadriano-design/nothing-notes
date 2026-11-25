@@ -232,6 +232,25 @@ Future<void> showQuickSwitcher(BuildContext context) async {
 }
 
 // ==================================================================== nouvelle page
+/// Pictogrammes monochromes des modèles intégrés (style Nothing).
+const kBuiltInTemplateIcons = <String, IconData>{
+  'builtin:quick': Icons.bolt_rounded,
+  'builtin:course': Icons.menu_book_rounded,
+  'builtin:meeting': Icons.groups_rounded,
+  'builtin:project': Icons.flag_outlined,
+  'builtin:todo': Icons.checklist_rounded,
+  'builtin:journal': Icons.edit_calendar_outlined,
+  'builtin:revision': Icons.psychology_alt_outlined,
+};
+
+/// Icône d'un modèle : pictogramme pour les intégrés, emoji choisi sinon.
+Widget templateIcon(PageTemplate t, {double size = 22}) {
+  final i = kBuiltInTemplateIcons[t.id];
+  if (i != null) return Icon(i, size: size);
+  if (t.icon != null && t.icon!.isNotEmpty) return Text(t.icon!, style: TextStyle(fontSize: size - 2));
+  return Icon(Icons.dashboard_customize_outlined, size: size);
+}
+
 /// Choix : page vide, base de données ou modèle. Renvoie la page créée.
 Future<Note?> showNewPageSheet(BuildContext context, {String? parentId}) async {
   final app = AppScope.read(context);
@@ -255,15 +274,13 @@ Future<Note?> showNewPageSheet(BuildContext context, {String? parentId}) async {
         child: Text(parentId == null ? 'Nouvelle page' : 'Nouvelle sous-page',
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
       ),
-      tile('blank', const Icon(Icons.note_add_outlined), 'Page vide', 'Ctrl+N'),
+      tile('blank', const Icon(Icons.note_add_outlined), 'Page vide', big ? '' : 'Ctrl+N'),
       tile('database', const Icon(Icons.table_chart_outlined), 'Base de données', 'Entrées avec propriétés, vues tableau, liste et calendrier'),
-      const SectionLabel('MODÈLES'),
-      for (final t in builtInTemplates.skip(1))
-        tile('tpl:${t.id}', Text(t.icon ?? '•', style: const TextStyle(fontSize: 20)), t.name, t.description),
+      const Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: SectionLabel('Modèles')),
+      for (final t in builtInTemplates.skip(1)) tile('tpl:${t.id}', templateIcon(t), t.name, t.description),
       if (custom.isNotEmpty) ...[
-        const SectionLabel('MES MODÈLES'),
-        for (final t in custom)
-          tile('tpl:${t.id}', Text(t.icon ?? '◦', style: const TextStyle(fontSize: 20)), t.name, t.description),
+        const Padding(padding: EdgeInsets.symmetric(horizontal: 12), child: SectionLabel('Mes modèles')),
+        for (final t in custom) tile('tpl:${t.id}', templateIcon(t), t.name, t.description),
       ],
     ]);
   });

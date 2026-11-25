@@ -1737,7 +1737,7 @@ Future<PageTemplate?> _pickTemplate(BuildContext context, NotesRepository repo) 
         for (final t in repo.templates())
           ListTile(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            leading: Text(t.icon ?? '◦', style: const TextStyle(fontSize: 20)),
+            leading: templateIcon(t),
             title: Text(t.name),
             subtitle: t.description.isEmpty ? null : Text(t.description, maxLines: 1, overflow: TextOverflow.ellipsis),
             onTap: () => Navigator.pop(c, t),

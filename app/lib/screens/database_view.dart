@@ -298,7 +298,7 @@ class _DatabaseViewState extends State<DatabaseView> {
             ListTile(leading: const Icon(Icons.note_add_outlined), title: const Text('Entrée vide'), onTap: () => Navigator.pop(c, '')),
             for (final t in tpls)
               ListTile(
-                leading: Text(t.icon ?? '◦', style: const TextStyle(fontSize: 20)),
+                leading: templateIcon(t),
                 title: Text(t.name),
                 onTap: () => Navigator.pop(c, t.id),
               ),

@@ -75,7 +75,7 @@ AppController _demo() {
     ]),
   ]);
   // Pages, sous-pages, base de données et tâches (données de démonstration).
-  final projet = repo.createNote(title: 'Projet atelier', icon: '🔧', blocks: [
+  final projet = repo.createNote(title: 'Projet atelier', blocks: [
     Block(type: BlockType.heading1, text: 'Objectif'),
     Block(text: 'Remettre en service le tapis convoyeur · voir ${pageLink('BTS Électrotechnique', main.id)}'),
     Block(type: BlockType.heading3, text: 'Étapes'),
