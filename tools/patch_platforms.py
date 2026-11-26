@@ -38,10 +38,39 @@ def manifest(s):
                  '                <data android:mimeType="text/*"/>\n'
                  '            </intent-filter>\n')
         s = s.replace("        </activity>", share + "        </activity>", 1)
+    # Mise à jour intégrée : installer l'APK téléchargé (l'utilisateur confirme).
+    if "REQUEST_INSTALL_PACKAGES" not in s:
+        s = s.replace("<application", '<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>\n    <application', 1)
+    if "androidx.core.content.FileProvider" not in s:
+        provider = ('        <provider\n'
+                    '            android:name="androidx.core.content.FileProvider"\n'
+                    '            android:authorities="${applicationId}.updates"\n'
+                    '            android:exported="false"\n'
+                    '            android:grantUriPermissions="true">\n'
+                    '            <meta-data\n'
+                    '                android:name="android.support.FILE_PROVIDER_PATHS"\n'
+                    '                android:resource="@xml/update_paths"/>\n'
+                    '        </provider>\n')
+        s = s.replace("    </application>", provider + "    </application>", 1)
     return s
 
 
 edit("android/app/src/main/AndroidManifest.xml", manifest)
+
+# Fichiers partagés avec l'installateur : uniquement le dossier des mises à jour téléchargées.
+xml = app / "android/app/src/main/res/xml"
+xml.mkdir(parents=True, exist_ok=True)
+(xml / "update_paths.xml").write_text(
+    '<?xml version="1.0" encoding="utf-8"?>\n<paths>\n    <cache-path name="updates" path="updates/"/>\n</paths>\n',
+    encoding="utf-8")
+
+# androidx.core (FileProvider) pour la mise à jour intégrée.
+kts = app / "android/app/build.gradle.kts"
+groovy = app / "android/app/build.gradle"
+if kts.exists() and "androidx.core:core" not in kts.read_text(encoding="utf-8"):
+    kts.write_text(kts.read_text(encoding="utf-8") + '\ndependencies {\n    implementation("androidx.core:core:1.13.1")\n}\n', encoding="utf-8")
+elif groovy.exists() and "androidx.core:core" not in groovy.read_text(encoding="utf-8"):
+    groovy.write_text(groovy.read_text(encoding="utf-8") + "\ndependencies {\n    implementation 'androidx.core:core:1.13.1'\n}\n", encoding="utf-8")
 
 # Activité principale : partage entrant et sortant (canal « nothing_notes/share »).
 for kt in (app / "android/app/src/main").rglob("MainActivity.kt"):

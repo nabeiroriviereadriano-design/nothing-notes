@@ -65,13 +65,21 @@ Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; Mise à jour depuis l'application (installation silencieuse) : relancer Nothing Notes.
+Filename: "{app}\{#AppExe}"; Flags: nowait; Check: ShouldRelaunch
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+// Installation silencieuse lancée par la mise à jour intégrée (/RELAUNCH=1).
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;
+
 // À la désinstallation : proposer d'effacer aussi les notes stockées sur ce PC.
-// Les notes synchronisées restent disponibles sur le compte (serveur).
+// Les notes restent sur les autres appareils associés s'il y en a.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: String;
@@ -84,7 +92,8 @@ begin
       if UninstallSilent then
         exit;
       if MsgBox('Supprimer aussi les notes et réglages enregistrés sur ce PC ?' + #13#10 + #13#10 +
-                'Les notes déjà synchronisées restent disponibles sur votre compte.' + #13#10 +
+                'Cela efface aussi les sauvegardes. Les notes restent sur vos autres' + #13#10 +
+                'appareils associés, s''il y en a.' + #13#10 +
                 'Choisissez « Non » pour les conserver (utile pour une réinstallation).',
                 mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
       begin

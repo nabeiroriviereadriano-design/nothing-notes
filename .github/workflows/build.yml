@@ -113,11 +113,21 @@ jobs:
             zip -q -d unsigned.apk 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.EC' 'META-INF/*.MF' || true
             "$BT/zipalign" -p -f 4 unsigned.apk aligned.apk
             "$BT/apksigner" sign --ks ks.jks --ks-pass env:KS_PASS --ks-key-alias "$KEY_ALIAS" --key-pass env:KS_PASS --out "$OUT" aligned.apk
-            "$BT/apksigner" verify --print-certs "$OUT" | head -3
             rm -f ks.jks
+            # La clé doit être TOUJOURS la même : sinon Android refuse la mise à jour.
+            GOT=$("$BT/apksigner" verify --print-certs "$OUT" | grep -m1 'SHA-256 digest' | sed -E 's/.*: *//' | tr 'A-F' 'a-f')
+            WANT=$(tr -d ' \n' < tools/android/signing-cert.sha256)
+            echo "Certificat : $GOT"
+            if [ "$GOT" != "$WANT" ]; then
+              echo "::error::Le certificat de signature ne correspond pas à celui de Nothing Notes ($WANT)."
+              exit 1
+            fi
+          elif [ "$GITHUB_EVENT_NAME" = "push" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
+            echo "::error::Clé de signature absente (secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS). Une version publiée doit être signée avec la clé fixe, sinon Android refuse la mise à jour."
+            exit 1
           else
             cp "$APK" "$OUT"
-            echo "::warning::Pas de clé de signature (secret ANDROID_KEYSTORE_BASE64) : APK signé avec une clé de test temporaire."
+            echo "::warning::Pas de clé de signature : APK de test (branche de développement uniquement)."
           fi
           ls -la "$OUT"
       - uses: actions/upload-artifact@v4
@@ -176,6 +186,28 @@ jobs:
           $dir = "$env:LOCALAPPDATA\Programs\Nothing Notes"
           if (-not (Test-Path "$dir\NothingNotes.exe")) { Write-Error "Installation échouée"; exit 1 }
           Write-Host "Installé dans $dir"
+          # Mise à jour comme depuis l'application : appli ouverte, installateur
+          # silencieux avec /RELAUNCH=1 → l'appli est fermée, remplacée, relancée,
+          # et les données sont toujours là.
+          $p1 = Start-Process -FilePath "$dir\NothingNotes.exe" -PassThru
+          Start-Sleep -Seconds 10
+          if ($p1.HasExited) { Write-Error "L'application installée ne démarre pas"; exit 1 }
+          $db = "$env:APPDATA\NothingNotes\notes.db"
+          if (-not (Test-Path $db)) { Write-Error "Base de notes absente"; exit 1 }
+          $before = (Get-Item $db).Length
+          # Même séquence que l'application : lancer l'installateur puis quitter.
+          $inst = Start-Process -FilePath $setup.FullName -ArgumentList '/SILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL','/RELAUNCH=1' -PassThru
+          Start-Sleep -Milliseconds 300
+          Stop-Process -Id $p1.Id -Force
+          $inst.WaitForExit()
+          if ($inst.ExitCode -ne 0) { Write-Error "Installateur en échec (code $($inst.ExitCode))"; exit 1 }
+          Start-Sleep -Seconds 8
+          $p2 = Get-Process NothingNotes -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $p1.Id }
+          if (-not $p2) { Write-Error "L'application n'a pas été relancée après la mise à jour"; exit 1 }
+          if (-not (Test-Path $db)) { Write-Error "Base de notes perdue pendant la mise à jour"; exit 1 }
+          Write-Host "Mise à jour silencieuse : appli fermée, remplacée et relancée (PID $($p2[0].Id)), base conservée ($before octets avant)."
+          $p2 | Stop-Process -Force
+          Start-Sleep -Seconds 2
           Start-Process -FilePath "$dir\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
           Start-Sleep -Seconds 3
           if (Test-Path "$dir\NothingNotes.exe") { Write-Error "Désinstallation incomplète"; exit 1 }
@@ -207,6 +239,9 @@ jobs:
             echo "La release v$V existe déjà : rien à publier (augmentez la version dans app/pubspec.yaml)."
             exit 0
           fi
+          # Nouveautés : la section de cette version dans docs/CHANGELOG.md
+          # (affichée aussi par la mise à jour intégrée de l'application).
+          awk -v v="## $V" '$0==v{f=1;next} /^## /{if(f)exit} f' docs/CHANGELOG.md > changes.md
           cat > notes.md <<NOTES
           ## Téléchargements
 
@@ -216,10 +251,11 @@ jobs:
           | Windows (sans installation) | \`NothingNotes-$V-portable.zip\` |
           | **Android 7.0+** | \`NothingNotes-$V.apk\` |
 
-          Premier lancement : créez votre serveur gratuit en suivant [docs/INSTALLATION.md](https://github.com/${{ github.repository }}/blob/main/docs/INSTALLATION.md).
+          Mise à jour : depuis l'application (*Paramètres → Mises à jour*), ou en installant la nouvelle version par-dessus l'ancienne. Vos notes sont conservées. Guide : [docs/INSTALLATION.md](https://github.com/${{ github.repository }}/blob/main/docs/INSTALLATION.md).
 
-          Mise à jour : installez la nouvelle version par-dessus l'ancienne, vos notes sont conservées.
+          ## Nouveautés
           NOTES
           sed -i 's/^          //' notes.md
+          cat changes.md >> notes.md
           gh release create "v$V" out/android-apk/* out/windows-installer/* \
             --target "$GITHUB_SHA" --title "Nothing Notes $V" --notes-file notes.md

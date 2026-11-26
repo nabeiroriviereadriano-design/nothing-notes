@@ -93,9 +93,17 @@ class NoteEditorState extends State<NoteEditor> {
     _title.addListener(_onTitleChanged);
   }
 
+  AppController? _appRef;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final app = AppScope.read(context);
+    if (_appRef != app) {
+      _appRef?.beforeExit.remove(flush);
+      _appRef = app;
+      app.beforeExit.add(flush);
+    }
     final r = AppScope.read(context).repo!;
     if (note == null) {
       repo = r;
@@ -119,6 +127,7 @@ class NoteEditorState extends State<NoteEditor> {
 
   @override
   void dispose() {
+    _appRef?.beforeExit.remove(flush);
     flush();
     _sub?.cancel();
     _saveTimer?.cancel();

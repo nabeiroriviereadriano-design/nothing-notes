@@ -114,6 +114,9 @@ jointes, 76 versions d'historique…), et relecture/réécriture des 34 lignes e
 | Base de données : tableau, valeur de statut affichée, nouvelle entrée ouverte avec ses propriétés | réussi |
 | Vue Tâches : tâches ouvertes par défaut, case non suivie absente, filtre « Terminées » | réussi |
 | Téléphone : bouton + → modèle « Réunion » → page créée avec sa structure | réussi |
+| Mise à jour : comparaison des versions, choix de l'APK ou de l'installateur (jamais le .zip), refus d'un fichier hébergé hors des releases du dépôt, empreinte SHA-256 lue, nouveautés extraites | réussi |
+| **Windows, mise à jour réelle** (CI, sur l'installateur compilé) : application installée et ouverte → installateur silencieux `/RELAUNCH=1` lancé comme le fait l'application → ancienne instance fermée, fichiers remplacés, **application relancée**, base de notes conservée | réussi |
+| Android : la CI refuse de publier un APK sans la clé fixe, ou signé avec un autre certificat que celui enregistré dans le dépôt | vérifié à la publication |
 | Compilation de l'APK Android | réussie |
 | Compilation Windows (exécutable natif) | réussie |
 | L'exécutable Windows démarre et reste ouvert 12 s sans erreur | réussi |
@@ -129,7 +132,7 @@ jointes, 76 versions d'historique…), et relecture/réécriture des 34 lignes e
 * La recherche de l'autre appareil par balayage du sous-réseau (désactivée
   dans les tests).
 * Le sélecteur de fichiers du système (import Markdown, pièces jointes) et l'export PDF.
-* Le partage Android (canal natif) : compilé, mais pas exécuté sur un téléphone.
+* Le partage Android et l'installation d'une mise à jour sur Android (canal natif) : compilés, mais pas exécutés sur un téléphone.
 * Le glisser-déposer des blocs, à la souris comme au doigt.
 * L'affichage des emojis d'icône de page (dépend des polices du système).
 

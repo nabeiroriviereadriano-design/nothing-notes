@@ -68,14 +68,37 @@ téléphone). En dernier recours, dans la fenêtre « Saisir un code », touchez
 
 ## 4. Mettre à jour
 
-Installez simplement la nouvelle version par-dessus l'ancienne (Windows et
-Android) : notes et associations sont conservées. *Paramètres → Rechercher une
-mise à jour* indique si une nouvelle version est publiée.
+**Depuis l'application** (à partir de la 3.1) : au démarrage, au plus une fois
+par jour, Nothing Notes demande à GitHub s'il existe une version plus récente.
+Rien n'est envoyé, et on peut désactiver cette vérification dans
+*Paramètres → À propos*. Quand une version est disponible, un message propose
+**Installer** ; on peut aussi passer par *Paramètres → Rechercher une mise à jour*.
 
-> Android : tant que le dépôt n'a pas de clé de signature fixe (voir plus bas),
-> chaque APK publié est signé avec une clé différente et Android refuse la mise
-> à jour par-dessus. Il faut alors désinstaller puis réinstaller, et refaire
-> l'association ; les notes reviennent depuis le PC à la première synchronisation.
+1. La nouvelle version est téléchargée depuis les releases du dépôt uniquement.
+   Sa taille et son empreinte SHA-256, publiées par GitHub, sont vérifiées.
+2. Les notes ouvertes sont enregistrées, puis une **sauvegarde** est faite. Les 5
+   dernières sont gardées dans *Sauvegardes*.
+3. **Windows** : l'application se ferme, l'installateur remplace les fichiers
+   sans rien demander, puis relance Nothing Notes.
+   **Android** : l'installateur d'Android demande confirmation. La première fois,
+   il faut autoriser Nothing Notes à installer des applications.
+4. Au redémarrage, si la base de notes doit évoluer, la migration sûre
+   s'applique (voir [MIGRATION-3.0.md](MIGRATION-3.0.md)).
+
+La version portable (.zip) se met à jour à la main : l'application ouvre la
+page de téléchargement.
+
+**À la main** : installez la nouvelle version par-dessus l'ancienne, sur
+Windows comme sur Android. Les notes et les associations sont conservées.
+
+> **Android, une seule fois : passage de la 3.0 à la 3.1.** Jusqu'à la 3.0, les
+> APK étaient signés avec une clé temporaire différente à chaque version. À
+> partir de la 3.1, ils sont tous signés avec **la même clé**, et la CI refuse
+> de publier un APK signé autrement : Android acceptera donc toutes les mises à
+> jour suivantes par-dessus. Pour passer de la 3.0 à la 3.1, il faut encore
+> désinstaller une dernière fois. Désinstaller efface les notes du téléphone :
+> synchronisez d'abord avec le PC, puis suivez l'ordre décrit dans
+> [MIGRATION-3.0.md](MIGRATION-3.0.md).
 
 ## 5. Désinstaller
 
@@ -117,13 +140,20 @@ cd .. && iscc installer\NothingNotes.iss
 Augmentez `version:` dans [`app/pubspec.yaml`](../app/pubspec.yaml) et envoyez
 sur `main` : GitHub Actions compile, teste et publie la release automatiquement.
 
-### Signature Android stable (recommandé)
+### Signature Android (obligatoire pour publier)
 
-```bash
-keytool -genkeypair -v -keystore nothingnotes.jks -alias nothingnotes -keyalg RSA -keysize 4096 -validity 10000
-base64 -w0 nothingnotes.jks > nothingnotes.jks.b64
-```
+Les APK publiés sont signés avec une clé fixe. L'empreinte de son certificat
+est enregistrée dans [`tools/android/signing-cert.sha256`](../tools/android/signing-cert.sha256).
+Sur `main`, la CI **refuse de publier** un APK sans clé ou signé avec une autre
+clé.
 
-Dans le dépôt GitHub : *Settings → Secrets and variables → Actions* → ajoutez
-`ANDROID_KEYSTORE_BASE64` (contenu du `.b64`), `ANDROID_KEYSTORE_PASSWORD` et
-`ANDROID_KEY_ALIAS` (`nothingnotes`). Conservez le fichier `.jks` en lieu sûr.
+La clé n'est pas dans le dépôt : elle est fournie à GitHub par trois secrets
+(*Settings → Secrets and variables → Actions*) :
+
+* `ANDROID_KEYSTORE_BASE64` : le fichier `.jks` encodé en base64 ;
+* `ANDROID_KEYSTORE_PASSWORD` : son mot de passe ;
+* `ANDROID_KEY_ALIAS` : `nothingnotes`.
+
+**Gardez une copie du fichier de clé en lieu sûr.** Si elle est perdue, Android
+refusera toute mise à jour par-dessus : il faudrait désinstaller l'application
+partout, avec le risque de perdre les notes du téléphone.

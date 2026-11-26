@@ -7,10 +7,10 @@ import 'package:notes_core/notes_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/exporter.dart';
-import '../services/update_checker.dart';
 import '../state/app_controller.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/update_dialog.dart';
 import 'devices_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -104,7 +104,21 @@ class SettingsScreen extends StatelessWidget {
                 title: const Text('Nothing Notes'),
                 subtitle: Text('Version $kAppVersion · logiciel libre et gratuit', style: TextStyle(color: nn.mid)),
               ),
-              _Tile(Icons.system_update_alt_rounded, 'Rechercher une mise à jour', () => _checkUpdate(context)),
+              _Tile(
+                app.updateAvailable != null ? Icons.new_releases_outlined : Icons.system_update_alt_rounded,
+                app.updateAvailable != null
+                    ? 'Installer la version ${app.updateAvailable!.cleanVersion}'
+                    : 'Rechercher une mise à jour',
+                () => checkAndOfferUpdate(context),
+              ),
+              SwitchListTile(
+                key: const ValueKey('auto-update'),
+                value: app.autoUpdateCheck,
+                activeThumbColor: NColors.red,
+                onChanged: (v) => app.setAutoUpdateCheck(v),
+                title: const Text('Vérifier les mises à jour au démarrage'),
+                subtitle: Text('Une fois par jour, auprès de GitHub. Rien n\'est envoyé.', style: TextStyle(color: nn.mid, fontSize: 12.5)),
+              ),
               _Tile(Icons.code_rounded, 'Code source sur GitHub',
                   () => launchUrl(Uri.parse('https://github.com/$kGithubRepo'), mode: LaunchMode.externalApplication)),
               _Tile(Icons.gavel_outlined, 'Licences', () => showLicensePage(context: context, applicationName: 'Nothing Notes', applicationVersion: kAppVersion)),
@@ -112,7 +126,8 @@ class SettingsScreen extends StatelessWidget {
             const SizedBox(height: 16),
             Text(
               'Vos notes sont enregistrées sur cet appareil et ne transitent que directement entre vos appareils '
-              'associés, sur votre réseau local, par une connexion chiffrée. Aucun compte, aucun serveur, rien sur Internet.',
+              'associés, sur votre réseau local, par une connexion chiffrée. Aucun compte, aucun serveur. Seule la '
+              'recherche de mise à jour contacte GitHub (désactivable), sans rien envoyer.',
               style: TextStyle(color: nn.mid, fontSize: 12, height: 1.45),
             ),
           ]),
@@ -174,26 +189,6 @@ class SettingsScreen extends StatelessWidget {
       Navigator.of(context).pop();
     }
   }
-
-  Future<void> _checkUpdate(BuildContext context) async {
-    toast(context, 'Recherche de mise à jour…');
-    try {
-      final u = await checkForUpdate();
-      if (!context.mounted) return;
-      if (u.newer) {
-        if (await confirm(context,
-            title: 'Version ${u.version} disponible',
-            message: 'Téléchargez le nouvel installateur depuis GitHub. Vos notes sont conservées lors de la mise à jour.',
-            ok: 'Télécharger')) {
-          await launchUrl(Uri.parse(u.url), mode: LaunchMode.externalApplication);
-        }
-      } else {
-        toast(context, 'Nothing Notes est à jour ($kAppVersion)');
-      }
-    } catch (e) {
-      if (context.mounted) toast(context, 'Vérification impossible (hors ligne ?)');
-    }
-  }
 }
 
 class _Card extends StatelessWidget {
@@ -237,6 +232,7 @@ class _BackupsScreenState extends State<BackupsScreen> {
   String _label(String l) => switch (l) {
         'manuelle' => 'Sauvegarde manuelle',
         'avant-restauration' => 'État remplacé lors d\'une restauration',
+        'avant-mise-a-jour' => 'Avant l\'installation d\'une nouvelle version',
         _ when l.endsWith('avant-migration') => 'Avant la mise à jour (version ${l.replaceAll(RegExp(r'[^0-9]'), '')} des données)',
         _ => l,
       };
