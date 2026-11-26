@@ -1,4 +1,4 @@
-# Guide d'utilisation — Nothing Notes 3.0
+# Guide d'utilisation — Nothing Notes 3.x
 
 Ce guide couvre les nouveautés de la version 3.0. Pour l'installation et
 l'association des appareils, voir [INSTALLATION.md](INSTALLATION.md).
@@ -152,6 +152,31 @@ la même, un conflit vous est proposé : rien n'est écrasé.
 les nouveaux champs. La 3.0 refuse donc de se synchroniser avec lui et affiche
 « Mettez à jour Nothing Notes sur … ». La synchronisation reprend dès que les
 deux appareils ont la même version.
+
+## Mises à jour
+
+À partir de la 3.1, une nouvelle version est signalée au démarrage : touchez
+**Installer**. Vos notes sont enregistrées et sauvegardées avant l'installation.
+Sur Windows, l'application se ferme, se met à jour et se relance seule. Sur
+Android, confirmez l'installation dans la fenêtre du système. Détails dans
+[INSTALLATION.md](INSTALLATION.md#4-mettre-à-jour).
+
+### Passer de la 3.0 à la 3.1 (une seule fois)
+
+Sur Windows, installez la 3.1 par-dessus la 3.0 : rien d'autre à faire.
+
+Sur Android, la 3.0 était signée avec une clé temporaire, et la 3.1 utilise la
+clé définitive. Android refuse donc de l'installer par-dessus, et désinstaller
+efface les notes du téléphone. Pour ne rien perdre :
+
+1. Ouvrez Nothing Notes sur le téléphone **et** sur le PC, et attendez
+   « Synchronisé ».
+2. Mettez le PC en 3.1 : installez `NothingNotes-Setup-3.1.0.exe` par-dessus.
+3. Sur le téléphone : désinstallez la 3.0, installez la 3.1, puis associez-le à
+   nouveau au PC. Les notes reviennent depuis le PC.
+
+Ensuite, toutes les mises à jour Android s'installent par-dessus, depuis
+l'application.
 
 ## Raccourcis clavier (Windows)
 

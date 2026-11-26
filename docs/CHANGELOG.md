@@ -1,5 +1,19 @@
 # Journal des versions
 
+## 3.1.0
+
+- **Mises à jour depuis l'application.** Nothing Notes signale une nouvelle version
+  (vérification une fois par jour, désactivable) et l'installe : téléchargement
+  depuis GitHub avec vérification de l'empreinte SHA-256, puis sauvegarde
+  automatique. Sur Windows, l'application se ferme, se met à jour et se relance
+  seule. Sur Android, l'installateur du système demande confirmation.
+- **Android : signature fixe.** Tous les APK sont désormais signés avec la même
+  clé, donc chaque mise à jour s'installe par-dessus la précédente et garde les
+  notes. Le passage de la 3.0 à la 3.1 demande encore une réinstallation : voir
+  « Passer de la 3.0 à la 3.1 » dans le guide.
+- Les sauvegardes faites avant une mise à jour apparaissent dans *Sauvegardes*.
+  Les 5 plus récentes sont gardées.
+
 ## 3.0.0
 
 Mise à jour **sans perte de données** : sauvegarde vérifiée avant migration,
