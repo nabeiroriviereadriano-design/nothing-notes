@@ -9,6 +9,10 @@ l'association des appareils, voir [INSTALLATION.md](INSTALLATION.md).
 > associés sont contrôlés un par un après la mise à jour. Au moindre écart,
 > l'ancienne base est remise en place et l'application vous le dit. Les
 > détails sont dans [MIGRATION-3.0.md](MIGRATION-3.0.md).
+>
+> **Android :** la 3.0 ne s'installe pas par-dessus la 2.0, et désinstaller
+> efface les notes du téléphone. Synchronisez d'abord avec le PC, et suivez
+> [l'ordre indiqué ici](MIGRATION-3.0.md#️-android--lordre-à-suivre-pour-passer-de-la-20-à-la-30).
 
 ## Pages et sous-pages
 

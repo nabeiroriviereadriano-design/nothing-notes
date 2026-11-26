@@ -3,6 +3,30 @@
 Principe : **aucune donnée existante n'est supprimée, vidée, recréée ni
 réécrite.** La migration ajoute, elle ne transforme pas.
 
+## ⚠️ Android : l'ordre à suivre pour passer de la 2.0 à la 3.0
+
+L'APK publié n'a pas de clé de signature fixe (voir INSTALLATION.md). Android
+refuse donc d'installer la 3.0 **par-dessus** la 2.0. Il faut désinstaller la
+2.0, et **désinstaller une appli Android efface ses données**. Pour ne rien
+perdre :
+
+1. **Les deux appareils encore en 2.0**, sur le même réseau : ouvrez Nothing
+   Notes sur le téléphone **et** sur le PC, et attendez « Synchronisé » des deux
+   côtés. Toutes les notes du téléphone sont alors aussi sur le PC.
+2. Vérifiez sur le PC que vos dernières notes du téléphone y sont.
+3. **Mettez à jour le PC** en 3.0 (installation par-dessus, sans rien
+   désinstaller). Il sauvegarde et migre sa base.
+4. Sur le téléphone : désinstallez la 2.0, installez la 3.0, puis associez-le à
+   nouveau au PC (*Appareils → Saisir un code*). Les notes reviennent depuis le PC.
+
+Sans PC associé, exportez d'abord vos notes depuis la 2.0 (*Paramètres →
+Exporter toutes les notes (Markdown)*). Réimportez-les ensuite dans la 3.0
+(*Paramètres → Importer des fichiers Markdown*). Les pièces jointes et
+l'historique ne sont pas repris par cette voie.
+
+Sur Windows, aucune précaution n'est nécessaire : la 3.0 s'installe par-dessus
+la 2.0 et migre la base en gardant tout.
+
 ## Ce qui change dans la base (`notes.db`)
 
 | Élément | Changement | Nature |
