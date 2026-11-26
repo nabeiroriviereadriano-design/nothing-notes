@@ -10,6 +10,7 @@ import '../widgets/note_list.dart';
 import '../widgets/pages_ui.dart';
 import '../widgets/sidebar.dart';
 import '../widgets/tasks_pane.dart';
+import '../widgets/update_dialog.dart';
 import 'devices_screen.dart';
 import 'settings_screen.dart';
 
@@ -35,9 +36,29 @@ class _HomeShellState extends State<HomeShell> {
     final app = AppScope.read(context);
     if (_app != app) {
       _app?.notice.removeListener(_onNotice);
+      _app?.updateNotice.removeListener(_onUpdate);
       _app = app;
       app.notice.addListener(_onNotice);
+      app.updateNotice.addListener(_onUpdate);
     }
+  }
+
+  void _onUpdate() {
+    final u = _app?.updateNotice.value;
+    if (u == null || !mounted) return;
+    _app?.updateNotice.value = null;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      duration: const Duration(seconds: 12),
+      content: Text('Nouvelle version ${u.cleanVersion} disponible'),
+      action: SnackBarAction(
+        label: 'Installer',
+        textColor: NColors.red,
+        onPressed: () {
+          _editorKey.currentState?.flush();
+          showUpdateDialog(context, u);
+        },
+      ),
+    ));
   }
 
   void _onNotice() {
@@ -49,6 +70,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void dispose() {
     _app?.notice.removeListener(_onNotice);
+    _app?.updateNotice.removeListener(_onUpdate);
     super.dispose();
   }
 

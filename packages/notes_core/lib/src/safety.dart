@@ -290,6 +290,12 @@ class DataSafety {
     // Les sauvegardes d'avant migration et les sauvegardes manuelles ne sont
     // jamais supprimées automatiquement.
     final auto = list().where((b) => b.label == 'avant-restauration').toList();
+    final beforeUpdate = list().where((b) => b.label == 'avant-mise-a-jour').toList();
+    for (final b in beforeUpdate.skip(keepAutomatic)) {
+      try {
+        File(b.path).deleteSync();
+      } catch (_) {}
+    }
     for (final b in auto.skip(keepAutomatic)) {
       try {
         File(b.path).deleteSync();

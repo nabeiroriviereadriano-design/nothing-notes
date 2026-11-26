@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 
 import '../services/platform_paths.dart';
 import '../services/share_bridge.dart';
+import '../services/update_checker.dart';
 
 const kAppVersion = String.fromEnvironment('APP_VERSION', defaultValue: '3.0.0');
 const kGithubRepo = 'nabeiroriviereadriano-design/nothing-notes';
@@ -145,6 +146,77 @@ class AppController extends ChangeNotifier {
       _shareListening = true;
       unawaited(ShareBridge.listen(importShared));
     }
+    if (repo != null) unawaited(autoCheckUpdate());
+  }
+
+  // ---------------------------------------------------------------- mises à jour
+  /// Dernière version disponible trouvée (null : à jour ou pas encore vérifié).
+  UpdateInfo? updateAvailable;
+
+  /// Recherche automatique (au plus une fois par jour), désactivable.
+  bool get autoUpdateCheck => settings.get<bool>('auto_update_check') ?? true;
+
+  Future<void> setAutoUpdateCheck(bool v) async {
+    await settings.set('auto_update_check', v);
+    notifyListeners();
+  }
+
+  Future<void> autoCheckUpdate({bool force = false}) async {
+    if (!force) {
+      if (!autoUpdateCheck) return;
+      final last = DateTime.tryParse(settings.get<String>('last_update_check') ?? '');
+      if (last != null && DateTime.now().difference(last) < const Duration(hours: 20)) {
+        final known = settings.get<String>('update_available');
+        if (known != null && isNewer(known, kAppVersion)) {
+          // Une version déjà repérée reste signalée sans nouvelle requête.
+          try {
+            updateAvailable = await checkForUpdate();
+            if (!updateAvailable!.newer) updateAvailable = null;
+            notifyListeners();
+          } catch (_) {}
+        }
+        return;
+      }
+    }
+    try {
+      final u = await checkForUpdate();
+      await settings.set('last_update_check', DateTime.now().toIso8601String());
+      await settings.set('update_available', u.newer ? u.cleanVersion : null);
+      updateAvailable = u.newer ? u : null;
+      if (u.newer && settings.get<String>('update_dismissed') != u.cleanVersion) {
+        updateNotice.value = u;
+      }
+      notifyListeners();
+    } catch (_) {
+      // Hors ligne : on réessaiera au prochain démarrage.
+    }
+  }
+
+  /// Nouvelle version à signaler une fois (bandeau de l'écran principal).
+  final updateNotice = ValueNotifier<UpdateInfo?>(null);
+
+  Future<void> dismissUpdate(UpdateInfo u) => settings.set('update_dismissed', u.cleanVersion);
+
+  /// Enregistrent les modifications en cours (éditeurs ouverts) avant de quitter.
+  final List<VoidCallback> beforeExit = [];
+
+  /// Avant une mise à jour : tout enregistrer, sauvegarde de sécurité,
+  /// puis (Windows) fermeture propre de la base et de la synchro.
+  Future<void> prepareForUpdate({required bool closeAll}) async {
+    for (final f in [...beforeExit]) {
+      try {
+        f();
+      } catch (_) {}
+    }
+    final st = store;
+    if (st != null) safety.backupNow(st, label: 'avant-mise-a-jour');
+    if (!closeAll) return;
+    _lifecycle?.dispose();
+    await _storeSub?.cancel();
+    await _statusSub?.cancel();
+    await node?.dispose();
+    store?.close();
+    store = null;
   }
 
   bool _shareListening = false;
