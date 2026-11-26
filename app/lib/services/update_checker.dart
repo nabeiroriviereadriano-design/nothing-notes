@@ -167,7 +167,7 @@ Future<File> downloadAsset(ReleaseAsset a, {void Function(int received, int tota
       throw UpdateError('Le fichier téléchargé ne correspond pas à celui publié (empreinte SHA-256 différente). Installation annulée.');
     }
     if (await file.exists()) await file.delete();
-    return part.rename(file.path);
+    return await part.rename(file.path);
   } on TimeoutException {
     if (await part.exists()) await part.delete();
     throw UpdateError('Connexion trop lente ou interrompue. Réessayez.');
